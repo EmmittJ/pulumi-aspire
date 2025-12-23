@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <PackageId>EmmittJ.Aspire.Hosting.Pulumi.Azure</PackageId>
+    <Description>Azure provider for Pulumi-Aspire integration - translates Aspire resources to Azure Container Apps, Redis Cache, PostgreSQL, and more.</Description>
+    <PackageTags>aspire;pulumi;azure;container-apps;iac;infrastructure;cloud</PackageTags>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EmmittJ.Aspire.Hosting.Pulumi\EmmittJ.Aspire.Hosting.Pulumi.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Pulumi.AzureNative" />
+    <PackageReference Include="Pulumi.Random" />
+  </ItemGroup>
+
+</Project>

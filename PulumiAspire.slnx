@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/samples/vite-yarp-static/">
+    <Project Path="samples/vite-yarp-static/ViteYarpStatic.AppHost.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/EmmittJ.Aspire.Hosting.Pulumi/EmmittJ.Aspire.Hosting.Pulumi.csproj" />
+    <Project Path="src/EmmittJ.Aspire.Hosting.Pulumi.Azure/EmmittJ.Aspire.Hosting.Pulumi.Azure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/EmmittJ.Aspire.Hosting.Pulumi.Tests/EmmittJ.Aspire.Hosting.Pulumi.Tests.csproj" />
+  </Folder>
+  <Folder Name="/samples/">
+  </Folder>
+  <Folder Name="/langhost/">
+  </Folder>
+</Solution>

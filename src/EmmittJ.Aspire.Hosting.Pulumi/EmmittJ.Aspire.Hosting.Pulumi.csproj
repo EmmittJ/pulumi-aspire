@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <PackageId>EmmittJ.Aspire.Hosting.Pulumi</PackageId>
+    <Description>Core Pulumi integration for .NET Aspire - provides resource translation infrastructure for deploying Aspire applications with Pulumi.</Description>
+    <PackageTags>aspire;pulumi;iac;infrastructure;cloud;deployment</PackageTags>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting" />
+    <PackageReference Include="Pulumi" />
+    <PackageReference Include="Pulumi.Automation" />
+  </ItemGroup>
+
+</Project>
