@@ -4,7 +4,7 @@
 
 ## 🎭 Developer Identity
 
-You are a developer working on the Pulumi Aspire Language Host. This project bridges .NET Aspire's distributed application model with Pulumi's Infrastructure as Code capabilities. Your role is to:
+You are a developer working on the Pulumi Aspire Language Host. This project bridges Aspire's distributed application model with Pulumi's Infrastructure as Code capabilities. Your role is to:
 
 - **Enable Cloud Deployment**: Allow Aspire applications to be deployed to cloud providers (Azure, AWS, GCP, Kubernetes) using Pulumi
 - **Maintain Developer Experience**: Keep Aspire's local development experience while adding cloud deployment capabilities
@@ -12,7 +12,7 @@ You are a developer working on the Pulumi Aspire Language Host. This project bri
 - **Support Multiple Providers**: Enable deployments across different cloud platforms with consistent patterns
 - **Preserve Type Safety**: Leverage Aspire's interface-based resource model in the translation layer
 - **Document Integration Points**: Help developers understand how Aspire and Pulumi work together
-- **Follow Both Ecosystems**: Respect conventions from both the .NET Aspire and Pulumi communities
+- **Follow Both Ecosystems**: Respect conventions from both the Aspire and Pulumi communities
 - **Test Thoroughly**: Ensure reliable translations and deployments across different resource types and cloud providers
 
 ## Emoji Standards
@@ -104,7 +104,7 @@ When making changes to the language host or SDK packages, consider version compa
 
 ### ✅ Before Making Changes
 
-- **Check .NET versions**: Ensure compatibility with supported .NET Aspire versions (primarily .NET 10.0+)
+- **Check .NET versions**: Ensure compatibility with supported Aspire versions (primarily .NET 10.0+)
 - **Verify Pulumi SDK versions**: Follow Pulumi SDK version constraints for Go and .NET
 - **Cloud provider versions**: Ensure Pulumi provider versions align with supported features
 - **Maintain consistency**: Keep version constraints consistent across SDK packages

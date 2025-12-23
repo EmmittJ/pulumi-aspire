@@ -1,7 +1,7 @@
 // Copyright 2024, EmmittJ. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
-// pulumi-language-aspire is the Pulumi language host for .NET Aspire applications.
+// pulumi-language-aspire is the Pulumi language host for Aspire applications.
 // It delegates to the Aspire CLI for deployment operations.
 package main
 
