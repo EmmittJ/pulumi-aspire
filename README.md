@@ -1,6 +1,7 @@
 # Pulumi Aspire
 
 [![.NET](https://img.shields.io/badge/.NET-10.0-purple)](https://dotnet.microsoft.com/)
+[![Aspire](https://img.shields.io/nuget/v/Aspire.Hosting?label=Aspire&color=512BD4)](https://aspire.dev/)
 [![Pulumi](https://img.shields.io/badge/Pulumi-3.x-blueviolet)](https://www.pulumi.com/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
