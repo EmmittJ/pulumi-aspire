@@ -3,7 +3,6 @@
 #pragma warning disable ASPIREPIPELINES001
 #pragma warning disable ASPIRECOMPUTE003
 
-using System.Collections.Immutable;
 using Aspire.Hosting.Pipelines;
 using EmmittJ.Aspire.Hosting.Pulumi;
 using Microsoft.Extensions.DependencyInjection;
@@ -21,7 +20,8 @@ namespace EmmittJ.Aspire.Hosting.Pulumi.Azure;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This resource provisions an Azure Container Registry as a separate Pulumi stack.
+/// This resource provisions an Azure Container Registry as a separate Pulumi stack
+/// using <see cref="PulumiRunnerMode.AutomationApi"/> mode.
 /// It is deployed before the main environment stack, allowing images to be pushed
 /// before deploying the compute resources.
 /// </para>
@@ -29,15 +29,13 @@ namespace EmmittJ.Aspire.Hosting.Pulumi.Azure;
 /// By default, it uses Azure CLI authentication for Docker login after provisioning.
 /// </para>
 /// <para>
-/// <strong>Naming:</strong> The registry uses <see cref="ResourcePrefix"/> for stack naming.
-/// The stack name is <c>{ResourcePrefix}-registry</c>. The <see cref="PulumiProjectName"/> groups
-/// related stacks in the Pulumi console and defaults to <see cref="ResourcePrefix"/>.
+/// <strong>Naming:</strong> The registry uses <see cref="PulumiContainerRegistryResource.ResourcePrefix"/> for stack naming.
+/// The stack name is <c>{ResourcePrefix}-registry</c>. The <see cref="PulumiContainerRegistryResource.PulumiProjectName"/> groups
+/// related stacks in the Pulumi console and defaults to <see cref="PulumiContainerRegistryResource.ResourcePrefix"/>.
 /// </para>
 /// </remarks>
 public sealed class PulumiAzureContainerRegistryResource : PulumiContainerRegistryResource
 {
-    private WorkspaceStack? _stack;
-    private IImmutableDictionary<string, OutputValue>? _outputs;
     private string? _resolvedResourceGroupName;
 
     /// <summary>
@@ -112,23 +110,14 @@ public sealed class PulumiAzureContainerRegistryResource : PulumiContainerRegist
     /// </summary>
     public string? ResolvedResourceGroupName => _resolvedResourceGroupName;
 
-    /// <summary>
-    /// Gets the Pulumi stack after provisioning.
-    /// </summary>
-    internal WorkspaceStack? Stack => _stack;
-
-    /// <summary>
-    /// Gets the Pulumi outputs after provisioning.
-    /// </summary>
-    internal IImmutableDictionary<string, OutputValue>? Outputs => _outputs;
-
     /// <inheritdoc />
     protected override async Task<(string Name, string Endpoint)> CreateRegistryAsync(PipelineStepContext context)
     {
         var logger = context.Services.GetRequiredService<ILoggerFactory>()
             .CreateLogger<PulumiAzureContainerRegistryResource>();
 
-        // Use the configured project and stack names
+        var runner = context.Services.GetRequiredService<PulumiRunner>();
+
         var projectName = PulumiProjectName;
         var stackName = $"{ResourcePrefix}-registry";
 
@@ -136,80 +125,22 @@ public sealed class PulumiAzureContainerRegistryResource : PulumiContainerRegist
             "Creating Azure Container Registry via Pulumi project '{ProjectName}' stack '{StackName}'...",
             projectName, stackName);
 
-        // Create Pulumi stack using automation API
-        var stackArgs = new InlineProgramArgs(projectName, stackName, PulumiFn.Create(() =>
+        // Use PulumiRunner with AutomationApi mode (registry always uses its own stack)
+        var result = await runner.ForStack(projectName, stackName)
+            .WithMode(PulumiRunnerMode.AutomationApi)
+            .WithConfiguration(ConfigureStackAsync)
+            .RunAsync(CreateRegistryProgram, context.CancellationToken);
+
+        if (!result.Success)
         {
-            // Use ResourcePrefix for unique resource group naming
-            var rgName = ResourceGroupName ?? $"{ResourcePrefix}-registry-rg";
-            var resourceGroup = new ResourceGroup(rgName, new ResourceGroupArgs
-            {
-                ResourceGroupName = rgName,
-                Location = Location
-            });
+            throw new InvalidOperationException(
+                result.ErrorMessage ?? "Failed to create container registry via Pulumi.");
+        }
 
-            // Create a deterministic random suffix using ResourcePrefix as keeper
-            // This ensures the same suffix is generated for the same resource prefix
-            var suffix = new RandomString($"{ResourcePrefix}-acr-suffix", new RandomStringArgs
-            {
-                Length = 13,
-                Special = false,
-                Upper = false,
-                Keepers = new InputMap<string>
-                {
-                    ["prefix"] = ResourcePrefix
-                }
-            });
-
-            // ACR names: "acr" + 13-char random suffix = 16 chars total
-            // Example: acrh8k2m9p4q1w3z
-            var registryName = suffix.Result.Apply(s => $"acr{s}");
-
-            // Create the container registry
-            var registry = new Registry($"{Name}-acr", new RegistryArgs
-            {
-                RegistryName = registryName,
-                ResourceGroupName = resourceGroup.Name,
-                Location = Location,
-                Sku = new global::Pulumi.AzureNative.ContainerRegistry.Inputs.SkuArgs
-                {
-                    Name = SkuName
-                },
-                AdminUserEnabled = EnableAdminUser
-            });
-
-            // Export outputs
-            return new Dictionary<string, object?>
-            {
-                ["registryName"] = registry.Name,
-                ["loginServer"] = registry.LoginServer,
-                ["resourceGroupName"] = resourceGroup.Name
-            };
-        }));
-
-        // Configure workspace with execution directory
-        var workDir = Path.Combine(Path.GetTempPath(), "pulumi-aspire", projectName);
-        Directory.CreateDirectory(workDir);
-
-        stackArgs.WorkDir = workDir;
-
-        _stack = await LocalWorkspace.CreateOrSelectStackAsync(stackArgs, context.CancellationToken);
-
-        // Configure Azure provider
-        await _stack.SetConfigAsync("azure-native:location", new ConfigValue(Location), context.CancellationToken);
-
-        logger.LogInformation("Running Pulumi up for registry stack '{StackName}'...", stackName);
-
-        // Run Pulumi up
-        var upResult = await _stack.UpAsync(new UpOptions
-        {
-            OnStandardOutput = msg => logger.LogDebug("[Pulumi] {Message}", msg),
-            OnStandardError = msg => logger.LogWarning("[Pulumi] {Message}", msg)
-        }, context.CancellationToken);
-
-        _outputs = upResult.Outputs;
-
-        if (!_outputs.TryGetValue("registryName", out var registryNameOutput) ||
-            !_outputs.TryGetValue("loginServer", out var loginServerOutput))
+        // Extract outputs from Automation API result
+        if (result.Outputs is null ||
+            !result.Outputs.TryGetValue("registryName", out var registryNameOutput) ||
+            !result.Outputs.TryGetValue("loginServer", out var loginServerOutput))
         {
             throw new InvalidOperationException(
                 "Failed to get registry outputs from Pulumi stack. " +
@@ -222,7 +153,7 @@ public sealed class PulumiAzureContainerRegistryResource : PulumiContainerRegist
             ?? throw new InvalidOperationException("Login server output is null.");
 
         // Store the resolved resource group name
-        if (_outputs.TryGetValue("resourceGroupName", out var resourceGroupOutput))
+        if (result.Outputs.TryGetValue("resourceGroupName", out var resourceGroupOutput))
         {
             _resolvedResourceGroupName = resourceGroupOutput.Value?.ToString();
         }
@@ -235,5 +166,67 @@ public sealed class PulumiAzureContainerRegistryResource : PulumiContainerRegist
             resolvedName, resolvedEndpoint);
 
         return (resolvedName, resolvedEndpoint);
+    }
+
+    /// <summary>
+    /// Creates the Pulumi program for the container registry.
+    /// </summary>
+    private System.Threading.Tasks.Task<IDictionary<string, object?>> CreateRegistryProgram()
+    {
+        // Use ResourcePrefix for unique resource group naming
+        var rgName = ResourceGroupName ?? $"{ResourcePrefix}-registry-rg";
+        var resourceGroup = new ResourceGroup(rgName, new ResourceGroupArgs
+        {
+            ResourceGroupName = rgName,
+            Location = Location
+        });
+
+        // Create a deterministic random suffix using ResourcePrefix as keeper
+        // This ensures the same suffix is generated for the same resource prefix
+        var suffix = new RandomString($"{ResourcePrefix}-acr-suffix", new RandomStringArgs
+        {
+            Length = 13,
+            Special = false,
+            Upper = false,
+            Keepers = new InputMap<string>
+            {
+                ["prefix"] = ResourcePrefix
+            }
+        });
+
+        // ACR names: "acr" + 13-char random suffix = 16 chars total
+        // Example: acrh8k2m9p4q1w3z
+        var registryName = suffix.Result.Apply(s => $"acr{s}");
+
+        // Create the container registry
+        var registry = new Registry($"{Name}-acr", new RegistryArgs
+        {
+            RegistryName = registryName,
+            ResourceGroupName = resourceGroup.Name,
+            Location = Location,
+            Sku = new global::Pulumi.AzureNative.ContainerRegistry.Inputs.SkuArgs
+            {
+                Name = SkuName
+            },
+            AdminUserEnabled = EnableAdminUser
+        });
+
+        // Export outputs
+        IDictionary<string, object?> outputs = new Dictionary<string, object?>
+        {
+            ["registryName"] = registry.Name,
+            ["loginServer"] = registry.LoginServer,
+            ["resourceGroupName"] = resourceGroup.Name
+        };
+
+        return System.Threading.Tasks.Task.FromResult(outputs);
+    }
+
+    /// <summary>
+    /// Configures the Pulumi stack with Azure provider settings.
+    /// </summary>
+    private async System.Threading.Tasks.Task ConfigureStackAsync(WorkspaceStack stack, CancellationToken cancellationToken)
+    {
+        await stack.SetConfigAsync("azure-native:location", new ConfigValue(Location), cancellationToken);
     }
 }

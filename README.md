@@ -94,46 +94,70 @@ aspire deploy
 
 ## 🏗️ Architecture
 
-Pulumi Aspire consists of two main components:
+Pulumi Aspire consists of two main components that work together to provide flexible deployment options:
 
 ### SDK Packages (.NET)
 
 NuGet packages that integrate with Aspire's model using Pulumi's Automation API:
 
-- **Core Package** – Base classes, pipeline steps, and Automation API orchestration
+- **Core Package** – Base classes, pipeline steps, and dual-mode runner infrastructure
 - **Provider Packages** – Cloud-specific resource translation (Azure, AWS, etc.)
 
 ### Language Host (Go)
 
-A minimal Pulumi language plugin that orchestrates `aspire deploy`:
+A minimal Pulumi language plugin (`pulumi-language-aspire`) that enables `pulumi up` to work with Aspire projects.
+
+### Execution Modes
+
+Pulumi Aspire supports two execution modes:
+
+| Mode | Command | Description |
+|------|---------|-------------|
+| **Automation API** | `aspire deploy` | Direct deployment using Pulumi's Automation API. Best for CI/CD and programmatic control. |
+| **Engine Mode** | `pulumi up` | Uses Pulumi CLI with the custom language host. Best for interactive development and Pulumi ecosystem integration. |
 
 ```
-pulumi up → pulumi-language-aspire → aspire deploy → Automation API → Cloud Resources
+# Automation API Mode
+aspire deploy → SDK Packages → Automation API → Cloud Resources
+
+# Engine Mode  
+pulumi up → pulumi-language-aspire → aspire deploy → SDK Packages → Cloud Resources
 ```
 
 ### Design Principles
 
 1. **Translation in C#, Not Go** – All resource translation happens in SDK packages
-2. **Automation API-First** – Uses Pulumi's Automation API for full programmatic control
+2. **Dual-Mode Support** – Works with both `aspire deploy` and `pulumi up`
 3. **Aspire-Native Patterns** – Follows Aspire's pipeline steps, event subscribers, and compute environments
 
 For detailed architecture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## 📋 Commands
 
+### Primary Commands
+
+| Command | Mode | Description |
+|---------|------|-------------|
+| `aspire run` | Local | Run locally with Aspire's development experience |
+| `aspire deploy` | Automation API | Deploy to cloud using Pulumi Automation API |
+| `pulumi up` | Engine | Deploy using Pulumi CLI with language host |
+| `pulumi preview` | Engine | Preview changes without deploying |
+| `pulumi destroy` | Engine | Destroy all cloud resources |
+
+### Aspire Pipeline Steps
+
 | Command | Description |
 |---------|-------------|
-| `aspire run` | Run locally with Aspire's development experience |
-| `aspire deploy` | Deploy to cloud using Pulumi |
-| `aspire do pulumi-preview-{env}` | Preview changes without deploying |
-| `aspire do pulumi-destroy-{env}` | Destroy all cloud resources |
+| `aspire do pulumi-preview-{env}` | Preview changes for a specific environment |
+| `aspire do pulumi-destroy-{env}` | Destroy resources for a specific environment |
 
-Pulumi CLI commands also work:
+### Pulumi Stack Management
 
 ```bash
 pulumi stack ls              # List stacks
 pulumi stack select prod     # Switch environments
 pulumi config set key value  # Configure stack
+pulumi stack output          # View outputs (URLs, resource names)
 ```
 
 ## ⚙️ Configuration
@@ -168,12 +192,14 @@ builder.AddPulumiAzureEnvironment("prod", "my-app");    // Stack: my-app/my-app-
 
 ## 🗺️ Roadmap
 
-### ✅ Phase 1: Foundation (Current)
+### ✅ Phase 1: Foundation (Complete)
 
 - [x] Core package with Automation API
 - [x] Azure Container Apps translation
 - [x] Pipeline steps (deploy, preview, destroy)
 - [x] Language host (Go)
+- [x] Dual-mode execution (Automation API + Engine mode)
+- [x] DI-injectable runner infrastructure
 
 ### 🔨 Phase 2: Databases
 

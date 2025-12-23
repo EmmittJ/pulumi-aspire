@@ -43,7 +43,6 @@ namespace EmmittJ.Aspire.Hosting.Pulumi.Azure;
 public class PulumiAzureEnvironmentResource : PulumiCloudEnvironmentResource
 {
     private readonly PulumiAzureContainerRegistryResource _registry;
-    private WorkspaceStack? _stack;
     private ResourceGroup? _resourceGroup;
     private ManagedEnvironment? _managedEnvironment;
     private UserAssignedIdentity? _managedIdentity;
@@ -161,7 +160,7 @@ public class PulumiAzureEnvironmentResource : PulumiCloudEnvironmentResource
         PipelineStepFactoryContext factoryContext,
         List<PipelineStep> steps)
     {
-        // Main deploy step for Container Apps
+        // Main deploy step for Container Apps - uses base class DeployAsync
         var deployStep = new PipelineStep
         {
             Name = PulumiWellKnownPipelineSteps.Deploy(Name),
@@ -193,101 +192,16 @@ public class PulumiAzureEnvironmentResource : PulumiCloudEnvironmentResource
         await Task.CompletedTask;
     }
 
-    /// <summary>
-    /// Executes the deploy step using the Pulumi Automation API.
-    /// </summary>
-    private async Task DeployAsync(PipelineStepContext context)
+    /// <inheritdoc />
+    protected override async Task ConfigureStackAsync(
+        WorkspaceStack stack,
+        PipelineStepContext context,
+        ILogger logger)
     {
-        var logger = context.Services.GetRequiredService<ILoggerFactory>()
-            .CreateLogger<PulumiAzureEnvironmentResource>();
+        // Configure Azure provider with location
+        await stack.SetConfigAsync("azure-native:location", new ConfigValue(Location), context.CancellationToken);
 
-        var task = await context.ReportingStep.CreateTaskAsync(
-            $"Deploying to **{Name}** with Pulumi", context.CancellationToken);
-
-        await using (task)
-        {
-            try
-            {
-                var stack = await GetOrCreateStackAsync(context, logger);
-
-                logger.LogInformation("Running 'pulumi up' for stack '{StackName}'...", Name);
-
-                var result = await stack.UpAsync(new UpOptions
-                {
-                    OnStandardOutput = msg => logger.LogInformation("{Message}", msg),
-                    OnStandardError = msg => logger.LogError("{Message}", msg)
-                }, context.CancellationToken);
-
-                logger.LogInformation(
-                    "Deployment to stack '{StackName}' completed. Summary: {Summary}",
-                    Name,
-                    result.Summary.Message);
-
-                await task.CompleteAsync(
-                    $"Deployment to **{Name}** completed successfully.",
-                    CompletionState.Completed,
-                    context.CancellationToken);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Deployment to stack '{StackName}' failed", Name);
-                await task.FailAsync(ex.Message, cancellationToken: context.CancellationToken);
-                throw;
-            }
-        }
-    }
-
-    /// <summary>
-    /// Creates the Pulumi stack for the Container Apps environment.
-    /// </summary>
-    private async Task<WorkspaceStack> GetOrCreateStackAsync(PipelineStepContext context, ILogger logger)
-    {
-        if (_stack is not null)
-        {
-            return _stack;
-        }
-
-        // Use the centralized naming from the base class
-        // All stacks are grouped under PulumiProjectName in the Pulumi console
-        var projectName = PulumiProjectName;
-        var stackName = ResourcePrefix;
-
-        logger.LogDebug(
-            "Creating Pulumi stack '{StackName}' for project '{ProjectName}'",
-            stackName, projectName);
-
-        // Create the inline program that will create Container App resources
-        var program = PulumiFn.Create(async () =>
-        {
-            var publishingContext = new PulumiPublishingContext(
-                context.Model,
-                this,
-                context,
-                context.ExecutionContext,
-                logger);
-
-            // Create the environment resources
-            await CreateResourcesAsync(publishingContext);
-
-            // Return outputs
-            return publishingContext.BuildOutputs();
-        });
-
-        // Create or select the stack
-        var workDir = Path.Combine(Path.GetTempPath(), "pulumi-aspire", projectName);
-        Directory.CreateDirectory(workDir);
-
-        _stack = await LocalWorkspace.CreateOrSelectStackAsync(
-            new InlineProgramArgs(projectName, stackName, program)
-            {
-                WorkDir = workDir
-            },
-            context.CancellationToken);
-
-        // Configure Azure provider
-        await _stack.SetConfigAsync("azure-native:location", new ConfigValue(Location), context.CancellationToken);
-
-        return _stack;
+        logger.LogDebug("Configured Azure stack with location '{Location}'", Location);
     }
 
     /// <summary>
@@ -344,43 +258,6 @@ public class PulumiAzureEnvironmentResource : PulumiCloudEnvironmentResource
         context.Logger.LogInformation(
             "Created Azure Container Apps for environment '{Name}'",
             Name);
-    }
-
-    /// <summary>
-    /// Prints a summary of the deployment outputs.
-    /// </summary>
-    private async Task PrintSummaryAsync(PipelineStepContext context)
-    {
-        var logger = context.Services.GetRequiredService<ILoggerFactory>()
-            .CreateLogger<PulumiAzureEnvironmentResource>();
-
-        if (_stack is null)
-        {
-            logger.LogWarning("No stack available for print summary");
-            return;
-        }
-
-        try
-        {
-            var outputs = await _stack.GetOutputsAsync(context.CancellationToken);
-
-            if (outputs.Count == 0)
-            {
-                logger.LogInformation("No outputs available for stack '{StackName}'", Name);
-                return;
-            }
-
-            logger.LogInformation("Stack '{StackName}' outputs:", Name);
-            foreach (var (key, value) in outputs)
-            {
-                var displayValue = value.IsSecret ? "***" : value.Value?.ToString() ?? "(null)";
-                logger.LogInformation("  {Key}: {Value}", key, displayValue);
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Failed to get outputs for stack '{StackName}'", Name);
-        }
     }
 
     /// <summary>

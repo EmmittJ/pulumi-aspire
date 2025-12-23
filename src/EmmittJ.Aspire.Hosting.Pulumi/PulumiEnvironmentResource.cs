@@ -241,46 +241,83 @@ public abstract class PulumiEnvironmentResource : Resource, IPulumiEnvironmentRe
     }
 
     /// <summary>
-    /// Executes the deploy step using the Automation API.
+    /// Creates the resource creation program that can be used with either the engine or Automation API.
+    /// </summary>
+    /// <param name="context">The pipeline step context.</param>
+    /// <param name="logger">The logger.</param>
+    /// <returns>A function that creates resources and returns outputs.</returns>
+    protected Func<Task<IDictionary<string, object?>>> CreateProgram(PipelineStepContext context, ILogger logger)
+    {
+        return async () =>
+        {
+            var publishingContext = new PulumiPublishingContext(
+                context.Model,
+                this,
+                context,
+                context.ExecutionContext,
+                logger);
+
+            // Let the provider-specific implementation create resources
+            await CreateResourcesAsync(publishingContext);
+
+            // Return outputs
+            return publishingContext.BuildOutputs();
+        };
+    }
+
+    /// <summary>
+    /// Executes the deploy step. Uses PulumiRunner which automatically chooses the right
+    /// execution mode based on whether we're under the Pulumi engine or running standalone.
     /// </summary>
     protected virtual async Task DeployAsync(PipelineStepContext context)
     {
         var logger = context.Services.GetRequiredService<ILoggerFactory>()
             .CreateLogger<PulumiEnvironmentResource>();
 
+        var runner = context.Services.GetRequiredService<PulumiRunner>();
+        var modeLabel = runner.EngineContext.IsRunningUnderEngine ? "engine mode" : "Automation API";
+
         var task = await context.ReportingStep.CreateTaskAsync(
-            $"Deploying to **{Name}** with Pulumi", context.CancellationToken);
+            $"Deploying to **{Name}** with Pulumi ({modeLabel})", context.CancellationToken);
 
         await using (task)
         {
             try
             {
-                var stack = await GetOrCreateStackAsync(context);
+                logger.LogInformation(
+                    "Running deployment for '{Name}' via {Mode}...",
+                    Name, modeLabel);
 
-                logger.LogInformation("Running 'pulumi up' for stack '{StackName}'...", Name);
+                var program = CreateProgram(context, logger);
 
-                var result = await stack.UpAsync(new UpOptions
+                var result = await runner.ForStack(PulumiProjectName, EnvironmentStackName)
+                    .WithMode(PulumiRunnerMode.Auto)
+                    .WithWorkDir(WorkDir)
+                    .WithConfiguration((stack, ct) => ConfigureStackAsync(stack, context, logger))
+                    .RunAsync(program, context.CancellationToken);
+
+                if (!result.Success)
                 {
-                    OnStandardOutput = msg => logger.LogInformation("{Message}", msg),
-                    OnStandardError = msg => logger.LogError("{Message}", msg),
-                    OnEvent = evt => HandlePulumiEvent(evt, logger)
-                }, context.CancellationToken);
+                    throw new InvalidOperationException(result.ErrorMessage ?? "Deployment failed");
+                }
 
-                _lastOutputs = result.Outputs.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+                if (result.Outputs is not null)
+                {
+                    _lastOutputs = result.Outputs.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+                }
 
                 logger.LogInformation(
-                    "Deployment to stack '{StackName}' completed. Summary: {Summary}",
-                    Name,
-                    result.Summary.Message);
+                    "Deployment to '{Name}' completed successfully via {Mode}.",
+                    Name, modeLabel);
 
                 await task.CompleteAsync(
-                    $"Deployment to **{Name}** completed successfully. {result.Summary.ResourceChanges?.Count ?? 0} resource changes.",
+                    $"Deployment to **{Name}** completed successfully ({modeLabel}).",
                     CompletionState.Completed,
                     context.CancellationToken);
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Deployment to stack '{StackName}' failed", Name);
+                logger.LogError(ex, "Deployment to '{Name}' failed", Name);
                 await task.FailAsync(ex.Message, cancellationToken: context.CancellationToken);
                 throw;
             }
@@ -288,44 +325,54 @@ public abstract class PulumiEnvironmentResource : Resource, IPulumiEnvironmentRe
     }
 
     /// <summary>
-    /// Executes the preview step using the Automation API.
+    /// Executes the preview step.
     /// </summary>
     protected virtual async Task PreviewAsync(PipelineStepContext context)
     {
         var logger = context.Services.GetRequiredService<ILoggerFactory>()
             .CreateLogger<PulumiEnvironmentResource>();
 
+        var runner = context.Services.GetRequiredService<PulumiRunner>();
+        var modeLabel = runner.EngineContext.IsRunningUnderEngine ? "engine mode" : "Automation API";
+
         var task = await context.ReportingStep.CreateTaskAsync(
-            $"Previewing changes for **{Name}**", context.CancellationToken);
+            $"Previewing changes for **{Name}** ({modeLabel})", context.CancellationToken);
 
         await using (task)
         {
             try
             {
-                var stack = await GetOrCreateStackAsync(context);
+                logger.LogInformation(
+                    "Running preview for '{Name}' via {Mode}...",
+                    Name, modeLabel);
 
-                logger.LogInformation("Running 'pulumi preview' for stack '{StackName}'...", Name);
+                var program = CreateProgram(context, logger);
 
-                var result = await stack.PreviewAsync(new PreviewOptions
+                var result = await runner.ForStack(PulumiProjectName, EnvironmentStackName)
+                    .WithMode(PulumiRunnerMode.Auto)
+                    .WithWorkDir(WorkDir)
+                    .WithConfiguration((stack, ct) => ConfigureStackAsync(stack, context, logger))
+                    .PreviewAsync(program, context.CancellationToken);
+
+                if (!result.Success)
                 {
-                    OnStandardOutput = msg => logger.LogInformation("{Message}", msg),
-                    OnStandardError = msg => logger.LogError("{Message}", msg),
-                    OnEvent = evt => HandlePulumiEvent(evt, logger)
-                }, context.CancellationToken);
+                    throw new InvalidOperationException(result.ErrorMessage ?? "Preview failed");
+                }
+
+                var changeCount = result.ChangeSummary?.Count ?? 0;
 
                 logger.LogInformation(
-                    "Preview for stack '{StackName}' completed. {ChangeCount} changes detected.",
-                    Name,
-                    result.ChangeSummary?.Count ?? 0);
+                    "Preview for '{Name}' completed. {ChangeCount} changes detected.",
+                    Name, changeCount);
 
                 await task.CompleteAsync(
-                    $"Preview for **{Name}** completed. {result.ChangeSummary?.Count ?? 0} changes detected.",
+                    $"Preview for **{Name}** completed. {changeCount} changes detected.",
                     CompletionState.Completed,
                     context.CancellationToken);
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Preview for stack '{StackName}' failed", Name);
+                logger.LogError(ex, "Preview for '{Name}' failed", Name);
                 await task.FailAsync(ex.Message, cancellationToken: context.CancellationToken);
                 throw;
             }

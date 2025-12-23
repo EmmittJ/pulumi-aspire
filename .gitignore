@@ -416,3 +416,8 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Ignore user-provided go.work files.
+/go.work
+/go.work.sum
+pulumi-language-aspire/pulumi-language-aspire.exe

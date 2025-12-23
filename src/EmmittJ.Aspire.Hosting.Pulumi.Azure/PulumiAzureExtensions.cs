@@ -76,6 +76,9 @@ public static class PulumiAzureExtensions
             ? new PulumiAzureEnvironmentResource(name, projectName)
             : new PulumiAzureEnvironmentResource(name);
 
+        // Register Pulumi hosting services (PulumiRunner, PulumiEngineContext)
+        builder.Services.AddPulumiHosting();
+
         // Register the environment resource as a singleton for DI
         builder.Services.AddSingleton(resource);
 

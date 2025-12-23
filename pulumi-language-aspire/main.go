@@ -7,18 +7,25 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
-	pbempty "github.com/golang/protobuf/ptypes/empty"
+	"github.com/pkg/errors"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/util/cmdutil"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/logging"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/util/rpcutil"
 	pulumirpc "github.com/pulumi/pulumi/sdk/v3/proto/go"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // Version is set at build time.
@@ -32,29 +39,30 @@ func main() {
 	flag.Parse()
 
 	args := flag.Args()
-	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "usage: pulumi-language-aspire <engine-address>\n")
-		os.Exit(1)
+	logging.InitLogging(false, 0, false)
+	cmdutil.InitTracing("pulumi-language-aspire", "pulumi-language-aspire", tracing)
+
+	var engineAddress string
+	if len(args) > 0 {
+		engineAddress = args[0]
 	}
 
-	engineAddress := args[0]
-	if err := run(engineAddress, tracing); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-}
+	// Set up signal handling for graceful shutdown
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	// Map the context Done channel to the rpcutil boolean cancel channel.
+	// The context will close on SIGINT or Healthcheck failure.
+	cancelChannel := make(chan bool)
+	go func() {
+		<-ctx.Done()
+		cancel() // remove the interrupt handler
+		close(cancelChannel)
+	}()
 
-func run(engineAddress, tracing string) error {
-	// Connect to the engine
-	conn, err := grpc.Dial(
-		engineAddress,
-		grpc.WithInsecure(),
-		rpcutil.GrpcChannelOptions(),
-	)
+	// Start healthcheck to monitor engine connection
+	err := rpcutil.Healthcheck(ctx, engineAddress, 5*time.Minute, cancel)
 	if err != nil {
-		return fmt.Errorf("failed to connect to engine: %w", err)
+		cmdutil.Exit(errors.Wrapf(err, "could not start health check host RPC server"))
 	}
-	defer conn.Close()
 
 	// Create the language host
 	host := &aspireLanguageHost{
@@ -62,23 +70,26 @@ func run(engineAddress, tracing string) error {
 		tracing:       tracing,
 	}
 
-	// Start the gRPC server
-	port, done, err := rpcutil.Serve(0, nil, []func(*grpc.Server) error{
-		func(srv *grpc.Server) error {
+	// Start the gRPC server using ServeWithOptions for proper lifecycle management
+	handle, err := rpcutil.ServeWithOptions(rpcutil.ServeOptions{
+		Cancel: cancelChannel,
+		Init: func(srv *grpc.Server) error {
 			pulumirpc.RegisterLanguageRuntimeServer(srv, host)
 			return nil
 		},
-	}, nil)
+		Options: rpcutil.OpenTracingServerInterceptorOptions(nil),
+	})
 	if err != nil {
-		return fmt.Errorf("failed to start language host: %w", err)
+		cmdutil.Exit(fmt.Errorf("could not start language host RPC server: %w", err))
 	}
 
 	// Print the port for the engine to connect
-	fmt.Printf("%d\n", port)
+	fmt.Printf("%d\n", handle.Port)
 
 	// Wait for the server to stop
-	<-done
-	return nil
+	if err := <-handle.Done; err != nil {
+		cmdutil.Exit(fmt.Errorf("language host RPC stopped serving: %w", err))
+	}
 }
 
 // aspireLanguageHost implements the Pulumi language runtime for Aspire.
@@ -86,6 +97,21 @@ type aspireLanguageHost struct {
 	pulumirpc.UnimplementedLanguageRuntimeServer
 	engineAddress string
 	tracing       string
+}
+
+// Handshake is the first call made by the engine to establish connection.
+func (host *aspireLanguageHost) Handshake(
+	ctx context.Context,
+	req *pulumirpc.LanguageHandshakeRequest,
+) (*pulumirpc.LanguageHandshakeResponse, error) {
+	logging.V(5).Infof("Handshake: engine=%s", req.EngineAddress)
+
+	// Store the engine address from handshake
+	if req.EngineAddress != "" {
+		host.engineAddress = req.EngineAddress
+	}
+
+	return &pulumirpc.LanguageHandshakeResponse{}, nil
 }
 
 // GetRequiredPlugins returns the plugins required by the Aspire project.
@@ -109,57 +135,135 @@ func (host *aspireLanguageHost) Run(
 	ctx context.Context,
 	req *pulumirpc.RunRequest,
 ) (*pulumirpc.RunResponse, error) {
-	logging.V(5).Infof("Run: %s", req.Program)
+	logging.V(5).Infof("Run: program=%s pwd=%s", req.Program, req.Pwd)
 
 	// Find the Aspire project directory
-	projectDir := req.Program
-	if projectDir == "" {
-		projectDir = req.Pwd
+	projectDir := req.Pwd
+	if req.Info != nil && req.Info.ProgramDirectory != "" {
+		projectDir = req.Info.ProgramDirectory
 	}
 
-	// Run `aspire deploy` which will invoke our SDK
-	cmd := exec.CommandContext(ctx, "aspire", "deploy")
+	// Serialize config for passing to aspire
+	config, err := host.constructConfig(req)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to serialize configuration")
+	}
+	configSecretKeys, err := host.constructConfigSecretKeys(req)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to serialize configuration secret keys")
+	}
+
+	// Run `aspire deploy --non-interactive` which will invoke our SDK
+	cmd := exec.CommandContext(ctx, "aspire", "deploy", "--non-interactive")
 	cmd.Dir = projectDir
 
-	// Pass Pulumi environment variables
-	cmd.Env = append(os.Environ(),
-		fmt.Sprintf("PULUMI_ENGINE_ADDRESS=%s", host.engineAddress),
-		fmt.Sprintf("PULUMI_MONITOR_ADDRESS=%s", req.MonitorAddress),
-		fmt.Sprintf("PULUMI_STACK=%s", req.Stack),
-		fmt.Sprintf("PULUMI_PROJECT=%s", req.Project),
-		fmt.Sprintf("PULUMI_PARALLEL=%d", req.Parallel),
-		"PULUMI_RUNTIME=aspire",
-	)
+	// Construct environment variables like dotnet language host
+	cmd.Env = host.constructEnv(req, config, configSecretKeys)
 
-	// Add config as environment variables
-	for key, value := range req.Config {
-		envKey := fmt.Sprintf("PULUMI_CONFIG_%s", strings.ReplaceAll(strings.ToUpper(key), ":", "_"))
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", envKey, value))
-	}
-
-	// Capture output
+	// Wire up stdout/stderr directly
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	// Run the command
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return &pulumirpc.RunResponse{
-				Error: fmt.Sprintf("aspire deploy failed with exit code %d", exitErr.ExitCode()),
-			}, nil
-		}
-		return &pulumirpc.RunResponse{
-			Error: fmt.Sprintf("failed to run aspire deploy: %v", err),
-		}, nil
+	if logging.V(5) {
+		logging.V(5).Infof("Language host launching: aspire deploy --non-interactive in %s", projectDir)
 	}
 
-	return &pulumirpc.RunResponse{}, nil
+	// Start the command
+	if err := cmd.Start(); err != nil {
+		return nil, errors.Wrap(err, "failed to start aspire deploy")
+	}
+
+	// Wait for the command to complete
+	var errResult string
+	if err := cmd.Wait(); err != nil {
+		if exiterr, ok := err.(*exec.ExitError); ok {
+			// If the program ran, but exited with a non-zero error code
+			if status, stok := exiterr.Sys().(syscall.WaitStatus); stok {
+				exitCode := status.ExitStatus()
+				// Exit code 6 is a known Windows console cleanup issue
+				if exitCode == 6 {
+					logging.V(3).Infof("Ignoring exit code %d (Windows console cleanup issue)", exitCode)
+					return &pulumirpc.RunResponse{}, nil
+				}
+				errResult = fmt.Sprintf("aspire deploy exited with code: %d", exitCode)
+			} else {
+				errResult = fmt.Sprintf("aspire deploy exited unexpectedly: %v", exiterr)
+			}
+		} else {
+			// Couldn't even run the command
+			errResult = fmt.Sprintf("failed to execute aspire deploy: %v", err)
+		}
+	}
+
+	return &pulumirpc.RunResponse{Error: errResult}, nil
+}
+
+// constructEnv builds the environment variables for the aspire deploy command.
+func (host *aspireLanguageHost) constructEnv(req *pulumirpc.RunRequest, config, configSecretKeys string) []string {
+	env := os.Environ()
+
+	maybeAppendEnv := func(k, v string) {
+		if v != "" {
+			env = append(env, strings.ToUpper("PULUMI_"+k)+"="+v)
+		}
+	}
+
+	maybeAppendEnv("monitor", req.GetMonitorAddress())
+	maybeAppendEnv("engine", host.engineAddress)
+	maybeAppendEnv("organization", req.GetOrganization())
+	maybeAppendEnv("project", req.GetProject())
+	if req.GetInfo() != nil {
+		maybeAppendEnv("root_directory", req.GetInfo().RootDirectory)
+	}
+	maybeAppendEnv("stack", req.GetStack())
+	maybeAppendEnv("pwd", req.GetPwd())
+	maybeAppendEnv("dry_run", strconv.FormatBool(req.GetDryRun()))
+	maybeAppendEnv("query_mode", strconv.FormatBool(req.GetQueryMode()))
+	maybeAppendEnv("parallel", strconv.Itoa(int(req.GetParallel())))
+	maybeAppendEnv("tracing", host.tracing)
+	maybeAppendEnv("config", config)
+	maybeAppendEnv("config_secret_keys", configSecretKeys)
+
+	// Also set as PULUMI_RUNTIME for backwards compatibility
+	env = append(env, "PULUMI_RUNTIME=aspire")
+
+	return env
+}
+
+// constructConfig json-serializes the configuration data given as part of a RunRequest.
+func (host *aspireLanguageHost) constructConfig(req *pulumirpc.RunRequest) (string, error) {
+	configMap := req.GetConfig()
+	if configMap == nil {
+		return "", nil
+	}
+
+	configJSON, err := json.Marshal(configMap)
+	if err != nil {
+		return "", err
+	}
+
+	return string(configJSON), nil
+}
+
+// constructConfigSecretKeys JSON-serializes the list of keys that contain secret values.
+func (host *aspireLanguageHost) constructConfigSecretKeys(req *pulumirpc.RunRequest) (string, error) {
+	configSecretKeys := req.GetConfigSecretKeys()
+	if configSecretKeys == nil {
+		return "[]", nil
+	}
+
+	configSecretKeysJSON, err := json.Marshal(configSecretKeys)
+	if err != nil {
+		return "", err
+	}
+
+	return string(configSecretKeysJSON), nil
 }
 
 // GetPluginInfo returns information about this language plugin.
 func (host *aspireLanguageHost) GetPluginInfo(
 	ctx context.Context,
-	req *pbempty.Empty,
+	req *emptypb.Empty,
 ) (*pulumirpc.PluginInfo, error) {
 	v := Version
 	if v == "" {
@@ -193,7 +297,7 @@ func (host *aspireLanguageHost) InstallDependencies(
 // About returns information about the runtime.
 func (host *aspireLanguageHost) About(
 	ctx context.Context,
-	req *pbempty.Empty,
+	req *pulumirpc.AboutRequest,
 ) (*pulumirpc.AboutResponse, error) {
 	// Get dotnet version
 	cmd := exec.CommandContext(ctx, "dotnet", "--version")
@@ -327,4 +431,26 @@ func (host *aspireLanguageHost) RuntimeOptionsPrompts(
 	req *pulumirpc.RuntimeOptionsRequest,
 ) (*pulumirpc.RuntimeOptionsResponse, error) {
 	return &pulumirpc.RuntimeOptionsResponse{}, nil
+}
+
+// GetRequiredPackages returns the packages required by the Aspire project.
+func (host *aspireLanguageHost) GetRequiredPackages(
+	ctx context.Context,
+	req *pulumirpc.GetRequiredPackagesRequest,
+) (*pulumirpc.GetRequiredPackagesResponse, error) {
+	logging.V(5).Infof("GetRequiredPackages: %s", req.Info.ProgramDirectory)
+
+	// For now, return an empty list - the actual packages are handled by the .NET SDK
+	return &pulumirpc.GetRequiredPackagesResponse{}, nil
+}
+
+// RunPlugin executes a plugin program asynchronously.
+func (host *aspireLanguageHost) RunPlugin(
+	req *pulumirpc.RunPluginRequest,
+	server pulumirpc.LanguageRuntime_RunPluginServer,
+) error {
+	logging.V(5).Infof("RunPlugin: %s", req.Program)
+
+	// Not applicable for Aspire - we don't run plugins in the traditional sense
+	return nil
 }
