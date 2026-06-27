@@ -23,18 +23,11 @@ flowchart LR
 - **AddYarp**: Reverse proxy with dual-mode routing
 - **AddPulumiAzureEnvironment**: Azure Container Apps deployment via Pulumi
 - **PublishWithStaticFiles**: Automatic static file serving in production
-- **Dual Execution Modes**: Both `aspire deploy` and `pulumi up` work
 
 ## Prerequisites
 
-1. **Build the Language Host** (required for `pulumi up`):
-   ```bash
-   cd pulumi-language-aspire
-   go build -o pulumi-language-aspire.exe .
-   ```
-
-2. **Azure CLI** - Logged in with `az login`
-3. **Pulumi CLI** - Logged in with `pulumi login`
+1. **Azure CLI** - Logged in with `az login`
+2. **Pulumi CLI** - Logged in with `pulumi login`
 
 ## Running Locally
 
@@ -44,53 +37,18 @@ aspire run
 
 ## Deploying to Azure
 
-### Option 1: Automation API Mode (`aspire deploy`)
-
-Best for CI/CD and programmatic control. No additional PATH setup required.
-
 ```bash
 aspire deploy
 ```
 
-### Option 2: Engine Mode (`pulumi up`)
-
-Best for interactive development and Pulumi ecosystem integration. Requires the language host in PATH.
-
-```powershell
-# PowerShell - Add language host to PATH (from repo root)
-$env:PATH = ".\pulumi-language-aspire;$env:PATH"
-
-# Deploy
-pulumi up
-
-# Preview changes
-pulumi preview
-
-# View outputs (URLs, resource names)
-pulumi stack output
-
-# Destroy resources
-pulumi destroy
-```
-
-```bash
-# Bash/Linux - Add language host to PATH (from repo root)
-export PATH="./pulumi-language-aspire:$PATH"
-
-# Deploy
-pulumi up
-```
-
 ## Commands Summary
 
-| Command | Mode | Description |
-|---------|------|-------------|
-| `aspire run` | Local | Run with Vite HMR |
-| `aspire deploy` | Automation API | Deploy to Azure |
-| `pulumi up` | Engine | Deploy via Pulumi CLI |
-| `pulumi preview` | Engine | Preview changes |
-| `pulumi destroy` | Engine | Tear down resources |
-| `aspire do pulumi-destroy-dev` | Automation API | Destroy via Aspire |
+| Command | Description |
+|---------|-------------|
+| `aspire run` | Run locally with Vite HMR |
+| `aspire deploy` | Deploy to Azure via Pulumi Automation API |
+| `aspire do pulumi-preview-dev` | Preview changes |
+| `aspire do pulumi-destroy-dev` | Tear down resources |
 
 ## Key Aspire Patterns
 

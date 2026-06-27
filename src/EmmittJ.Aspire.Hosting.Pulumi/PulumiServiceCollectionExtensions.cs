@@ -19,16 +19,12 @@ public static class PulumiServiceCollectionExtensions
     /// <remarks>
     /// Registers the following services:
     /// <list type="bullet">
-    ///   <item><see cref="PulumiEngineContext"/> - Provides context about the Pulumi engine environment.</item>
-    ///   <item><see cref="PulumiRunner"/> - Executes Pulumi programs via engine mode or Automation API.</item>
+    ///   <item><see cref="PulumiRunner"/> - Executes Pulumi programs via the Automation API.</item>
     /// </list>
     /// </remarks>
     public static IServiceCollection AddPulumiHosting(this IServiceCollection services)
     {
-        // PulumiEngineContext reads from IConfiguration (environment variables)
-        services.TryAddSingleton<PulumiEngineContext>();
-
-        // PulumiRunner depends on PulumiEngineContext
+        // PulumiRunner executes Pulumi programs via the Automation API
         services.TryAddSingleton<PulumiRunner>();
 
         return services;

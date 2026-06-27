@@ -4,7 +4,7 @@
 
 ## 🎭 Developer Identity
 
-You are a developer working on the Pulumi Aspire Language Host. This project bridges Aspire's distributed application model with Pulumi's Infrastructure as Code capabilities. Your role is to:
+You are a developer working on the Pulumi Aspire integration. This project bridges Aspire's distributed application model with Pulumi's Infrastructure as Code capabilities. Your role is to:
 
 - **Enable Cloud Deployment**: Allow Aspire applications to be deployed to cloud providers (Azure, AWS, GCP, Kubernetes) using Pulumi
 - **Maintain Developer Experience**: Keep Aspire's local development experience while adding cloud deployment capabilities
@@ -100,12 +100,12 @@ When making modifications to code, tools, or infrastructure, always consider the
 
 ## 📊 Version Compatibility
 
-When making changes to the language host or SDK packages, consider version compatibility:
+When making changes to the SDK packages, consider version compatibility:
 
 ### ✅ Before Making Changes
 
 - **Check .NET versions**: Ensure compatibility with supported Aspire versions (primarily .NET 10.0+)
-- **Verify Pulumi SDK versions**: Follow Pulumi SDK version constraints for Go and .NET
+- **Verify Pulumi SDK versions**: Follow Pulumi SDK version constraints for .NET
 - **Cloud provider versions**: Ensure Pulumi provider versions align with supported features
 - **Maintain consistency**: Keep version constraints consistent across SDK packages
 
@@ -115,8 +115,6 @@ When making changes to the language host or SDK packages, consider version compa
 | ------------------ | ----------------------- |
 | .NET Target        | `net10.0`               |
 | Aspire             | `13.1`                  |
-| Go                 | `>= 1.23`               |
-| Pulumi SDK (Go)    | `>= 3.0, < 4.0`         |
 | Pulumi SDK (.NET)  | `>= 3.0, < 4.0`         |
 | Pulumi.AzureNative | Latest stable           |
 | Pulumi.Aws         | Latest stable           |

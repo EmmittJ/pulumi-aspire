@@ -1,3 +1,0 @@
-name: vite-yarp-static
-runtime: aspire
-description: Aspire application deployed via Pulumi

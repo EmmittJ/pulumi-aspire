@@ -9,7 +9,6 @@
 
   <ItemGroup>
     <PackageReference Include="Aspire.Hosting" />
-    <PackageReference Include="Pulumi" />
     <PackageReference Include="Pulumi.Automation" />
   </ItemGroup>
 

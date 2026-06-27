@@ -151,24 +151,6 @@ public sealed class PulumiOutputReference(string name, IResource resource)
 }
 ```
 
-### 5. Language Host (Go)
-
-Minimal orchestration - delegates to Aspire CLI:
-
-```go
-func (host *aspireLanguageHost) Run(ctx context.Context, req *pulumirpc.RunRequest) {
-    cmd := exec.CommandContext(ctx, "aspire", "deploy")
-    cmd.Dir = projectDir
-    cmd.Env = append(os.Environ(),
-        fmt.Sprintf("PULUMI_ENGINE_ADDRESS=%s", host.engineAddress),
-        fmt.Sprintf("PULUMI_MONITOR_ADDRESS=%s", req.MonitorAddress),
-        fmt.Sprintf("PULUMI_STACK=%s", req.Stack),
-        "PULUMI_RUNTIME=aspire",
-    )
-    cmd.Run()
-}
-```
-
 ## Azure Provider Implementation
 
 ### PulumiAzureEnvironmentResource
@@ -247,17 +229,11 @@ public class PulumiCustomizationAnnotation<TResource> : IResourceAnnotation
 aspire run
 
 # Cloud deployment
-aspire deploy                          # Uses Automation API
-pulumi up                              # Via language host → aspire deploy
+aspire deploy                          # Uses Pulumi Automation API
 
 # Other operations
 aspire do pulumi-preview-{env}         # Preview changes
 aspire do pulumi-destroy-{env}         # Destroy resources
-
-# Stack management
-pulumi stack ls
-pulumi stack select prod
-pulumi config set key value
 ```
 
 ## Environment Name = Stack Name
@@ -297,7 +273,6 @@ builder.AddPulumiAzureEnvironment("prod");     // → stack "prod"
 - [x] `PulumiOutputReference` (simplified)
 - [x] Pipeline steps (deploy, preview, destroy)
 - [x] Azure Container Apps translation
-- [x] Language host (Go)
 
 ### Phase 2: Databases (Planned)
 

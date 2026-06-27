@@ -125,9 +125,8 @@ public sealed class PulumiAzureContainerRegistryResource : PulumiContainerRegist
             "Creating Azure Container Registry via Pulumi project '{ProjectName}' stack '{StackName}'...",
             projectName, stackName);
 
-        // Use PulumiRunner with AutomationApi mode (registry always uses its own stack)
+        // Use PulumiRunner (registry always uses its own stack via the Automation API)
         var result = await runner.ForStack(projectName, stackName)
-            .WithMode(PulumiRunnerMode.AutomationApi)
             .WithConfiguration(ConfigureStackAsync)
             .RunAsync(CreateRegistryProgram, context.CancellationToken);
 

@@ -241,7 +241,7 @@ public abstract class PulumiEnvironmentResource : Resource, IPulumiEnvironmentRe
     }
 
     /// <summary>
-    /// Creates the resource creation program that can be used with either the engine or Automation API.
+    /// Creates the resource creation program for use with the Pulumi Automation API.
     /// </summary>
     /// <param name="context">The pipeline step context.</param>
     /// <param name="logger">The logger.</param>
@@ -266,8 +266,7 @@ public abstract class PulumiEnvironmentResource : Resource, IPulumiEnvironmentRe
     }
 
     /// <summary>
-    /// Executes the deploy step. Uses PulumiRunner which automatically chooses the right
-    /// execution mode based on whether we're under the Pulumi engine or running standalone.
+    /// Executes the deploy step using the Pulumi Automation API.
     /// </summary>
     protected virtual async Task DeployAsync(PipelineStepContext context)
     {
@@ -275,23 +274,21 @@ public abstract class PulumiEnvironmentResource : Resource, IPulumiEnvironmentRe
             .CreateLogger<PulumiEnvironmentResource>();
 
         var runner = context.Services.GetRequiredService<PulumiRunner>();
-        var modeLabel = runner.EngineContext.IsRunningUnderEngine ? "engine mode" : "Automation API";
 
         var task = await context.ReportingStep.CreateTaskAsync(
-            $"Deploying to **{Name}** with Pulumi ({modeLabel})", context.CancellationToken);
+            $"Deploying to **{Name}** with Pulumi Automation API", context.CancellationToken);
 
         await using (task)
         {
             try
             {
                 logger.LogInformation(
-                    "Running deployment for '{Name}' via {Mode}...",
-                    Name, modeLabel);
+                    "Running deployment for '{Name}'...",
+                    Name);
 
                 var program = CreateProgram(context, logger);
 
                 var result = await runner.ForStack(PulumiProjectName, EnvironmentStackName)
-                    .WithMode(PulumiRunnerMode.Auto)
                     .WithWorkDir(WorkDir)
                     .WithConfiguration((stack, ct) => ConfigureStackAsync(stack, context, logger))
                     .RunAsync(program, context.CancellationToken);
@@ -307,11 +304,11 @@ public abstract class PulumiEnvironmentResource : Resource, IPulumiEnvironmentRe
                 }
 
                 logger.LogInformation(
-                    "Deployment to '{Name}' completed successfully via {Mode}.",
-                    Name, modeLabel);
+                    "Deployment to '{Name}' completed successfully.",
+                    Name);
 
                 await task.CompleteAsync(
-                    $"Deployment to **{Name}** completed successfully ({modeLabel}).",
+                    $"Deployment to **{Name}** completed successfully.",
                     CompletionState.Completed,
                     context.CancellationToken);
             }
@@ -333,23 +330,21 @@ public abstract class PulumiEnvironmentResource : Resource, IPulumiEnvironmentRe
             .CreateLogger<PulumiEnvironmentResource>();
 
         var runner = context.Services.GetRequiredService<PulumiRunner>();
-        var modeLabel = runner.EngineContext.IsRunningUnderEngine ? "engine mode" : "Automation API";
 
         var task = await context.ReportingStep.CreateTaskAsync(
-            $"Previewing changes for **{Name}** ({modeLabel})", context.CancellationToken);
+            $"Previewing changes for **{Name}** with Pulumi Automation API", context.CancellationToken);
 
         await using (task)
         {
             try
             {
                 logger.LogInformation(
-                    "Running preview for '{Name}' via {Mode}...",
-                    Name, modeLabel);
+                    "Running preview for '{Name}'...",
+                    Name);
 
                 var program = CreateProgram(context, logger);
 
                 var result = await runner.ForStack(PulumiProjectName, EnvironmentStackName)
-                    .WithMode(PulumiRunnerMode.Auto)
                     .WithWorkDir(WorkDir)
                     .WithConfiguration((stack, ct) => ConfigureStackAsync(stack, context, logger))
                     .PreviewAsync(program, context.CancellationToken);
