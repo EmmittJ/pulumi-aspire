@@ -2,25 +2,24 @@
 
 ## Overview
 
-**Pulumi Aspire** enables Aspire applications to be deployed to cloud infrastructure using Pulumi. The architecture consists of two main components:
+**Pulumi Aspire** enables Aspire applications to be deployed to cloud infrastructure using Pulumi. The architecture is centered on a single integration layer:
 
-1. **SDK Packages (.NET)**: NuGet packages that integrate with Aspire's model and use Pulumi's Automation API
-2. **Language Host (Go)**: A minimal Pulumi language plugin that orchestrates Aspire CLI execution
+1. **SDK Packages (.NET)**: NuGet packages that integrate with Aspire's model and use Pulumi's Automation API for stack operations
 
 ## Design Principles
 
-### 1. Translation in C#, Not Go
+### 1. Translation in C#
 
-All resource translation happens in the SDK packages (C#), not the language host (Go):
+All resource translation happens in the SDK packages (C#):
 
-- **Adding cloud providers = adding NuGet packages**, not modifying the language host
+- **Adding cloud providers = adding NuGet packages**
 - **Full access to Aspire's type system** (interfaces, annotations, DI)
 - **Uses Pulumi Automation API directly** for stack operations
-- **Language host is minimal** - just orchestrates the aspire CLI
+- **Deployment flow is centralized** in the .NET SDK and shared hosting abstractions
 
 ### 2. Automation API-First
 
-We use Pulumi's **Automation API** rather than relying on the language host gRPC protocol:
+We use Pulumi's **Automation API** rather than relying on an external language host protocol:
 
 - The base `PulumiEnvironmentResource` handles all Automation API orchestration
 - Provider packages only implement `CreateResourcesAsync()` to create cloud resources
@@ -39,10 +38,6 @@ We follow Aspire's established patterns:
 
 ```
 pulumi-aspire/
-├── langhost/
-│   └── pulumi-language-aspire/         # Go language host (minimal)
-│       ├── main.go
-│       └── go.mod
 ├── src/
 │   ├── EmmittJ.Aspire.Hosting.Pulumi/           # Core package
 │   │   ├── IPulumiEnvironmentResource.cs        # Compute environment interface
@@ -299,7 +294,6 @@ builder.AddPulumiAzureEnvironment("prod");     // → stack "prod"
 |---------|--------------|
 | Core | `Pulumi`, `Pulumi.Automation`, `Aspire.Hosting` |
 | Azure | Core + `Pulumi.AzureNative` |
-| Language Host | `pulumi/sdk/v3`, `grpc` |
 
 ## References
 

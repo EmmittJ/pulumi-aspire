@@ -21,7 +21,7 @@ namespace EmmittJ.Aspire.Hosting.Pulumi.Azure;
 /// <remarks>
 /// <para>
 /// This resource provisions an Azure Container Registry as a separate Pulumi stack
-/// using <see cref="PulumiRunnerMode.AutomationApi"/> mode.
+/// using the Automation API.
 /// It is deployed before the main environment stack, allowing images to be pushed
 /// before deploying the compute resources.
 /// </para>
