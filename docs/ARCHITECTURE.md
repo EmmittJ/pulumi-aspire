@@ -1,6 +1,8 @@
 # Architecture
 
-Pulumi Aspire deploys Aspire compute resources to the cloud using Pulumi's [Automation API](https://www.pulumi.com/docs/guides/automation-api/). It implements Aspire's deployment-target/publisher pattern — the same model used by the built-in Azure Container Apps, Kubernetes, and Docker Compose integrations — so it participates in `aspire run`, `aspire publish`, and `aspire deploy` like any first-party compute environment.
+This document describes the internal structure of the Pulumi integration for maintainers. It complements the README by focusing on lifecycle and extension points rather than setup or end-user usage.
+
+Pulumi Aspire deploys Aspire compute resources to the cloud using Pulumi's [Automation API](https://www.pulumi.com/docs/guides/automation-api/). It implements Aspire's deployment-target/publisher pattern so it participates in `aspire run`, `aspire publish`, and `aspire deploy` alongside other compute environments.
 
 ## Packages
 
@@ -47,12 +49,14 @@ The Azure provider provisions an Azure Container Registry as a **separate Pulumi
 
 ## Adding a provider
 
-A new cloud provider implements:
+A new cloud provider implementation typically includes:
 
 1. A `PulumiEnvironmentResource` subclass whose `CreateStackResourcesAsync` provisions the provider's infrastructure and translates each targeted compute resource.
 2. A `PulumiComputeResourceContext` subclass that builds the provider's workload resource and resolves endpoints.
 3. A `PulumiContainerRegistryResource` subclass if the provider needs a registry.
 4. An `Add{Provider}Environment` extension method (in the `Aspire.Hosting` namespace) that applies the run/publish split and calls `AddPulumiInfrastructureCore`.
+
+The Azure package is the only provider implemented in this repository today.
 
 ## References
 

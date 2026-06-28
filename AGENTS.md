@@ -87,6 +87,7 @@ When making modifications to code, tools, or infrastructure, always consider the
 - **Sensible Defaults**: Choose default values that work for most common scenarios
 - **Fast Feedback**: Provide quick validation and clear error messages when things go wrong
 - **Documentation**: Include inline comments for complex logic and update relevant documentation
+- **Accurate Scope**: Describe current capabilities precisely and avoid implying support for unimplemented providers, services, or commands
 - **Testing**: Ensure changes don't break existing workflows; add tests for new functionality
 - **Backward Compatibility**: When possible, maintain compatibility with existing code and avoid breaking changes
 

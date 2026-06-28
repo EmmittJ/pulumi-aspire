@@ -9,19 +9,21 @@ Deploy Aspire applications to cloud infrastructure using Pulumi's Infrastructure
 
 ## 🎯 Overview
 
-**Pulumi Aspire** bridges Aspire's distributed application model with Pulumi's Infrastructure as Code capabilities. It enables you to:
+**Pulumi Aspire** is an experimental Aspire hosting integration that lets an AppHost publish or deploy selected compute resources to Azure Container Apps through Pulumi.
 
-- ☁️ **Deploy to Azure Container Apps** – AWS, GCP, and Kubernetes support planned
-- 🔧 **Keep Aspire's DX** – `aspire run` for local dev, `aspire deploy` for cloud deployment
-- 🏗️ **Infrastructure as Code** – Full Pulumi stack management, state, and drift detection
-- 🔌 **Extensible** – Add cloud providers via NuGet packages, not code changes
+It currently focuses on:
+
+- ☁️ **Azure Container Apps deployment** – this is the provider implemented today
+- 🔧 **Preserving the local Aspire experience** – `aspire run` stays available for development
+- 🧪 **Pulumi-backed preview and apply workflows** – `aspire publish` and `aspire deploy` are driven by Pulumi Automation API
+- 🧩 **Provider-specific extensions** – the core package can be extended with additional cloud providers over time
 
 ## 📦 Packages
 
-| Package | Description | NuGet |
-|---------|-------------|-------|
-| `EmmittJ.Aspire.Hosting.Pulumi` | Core abstractions and Automation API integration | Coming Soon |
-| `EmmittJ.Aspire.Hosting.Pulumi.Azure` | Azure Container Apps deployment | Coming Soon |
+| Package | Description | Status |
+|---------|-------------|--------|
+| `EmmittJ.Aspire.Hosting.Pulumi` | Core abstractions, lifecycle hooks, and Pulumi Automation API integration | Not yet published |
+| `EmmittJ.Aspire.Hosting.Pulumi.Azure` | Azure Container Apps provider for compute and resource translation | Not yet published |
 
 ## 🚀 Getting Started
 
@@ -79,12 +81,9 @@ aspire deploy
 
 ## 🏗️ Architecture
 
-Pulumi Aspire implements Aspire's deployment-target pattern (the same model as the built-in Azure Container Apps, Kubernetes, and Docker Compose integrations) and uses Pulumi's Automation API for stack operations:
+Pulumi Aspire follows Aspire's deployment-target and publisher model. The core package provides the provider-agnostic lifecycle hooks and Pulumi integration points, while the Azure package translates Aspire compute resources into Azure Container Apps resources.
 
-- **Core package** – the compute-environment base class, per-resource deployment targets, value/secret resolver, container-registry base, and the Automation API runner
-- **Provider packages** – cloud-specific resource translation (Azure today)
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the implementation details and extension points.
 
 ## 📋 Commands
 
@@ -125,11 +124,12 @@ builder.AddPulumiAzureEnvironment("staging", "my-app"); // Stack: my-app/my-app-
 builder.AddPulumiAzureEnvironment("prod", "my-app");    // Stack: my-app/my-app-prod
 ```
 
-## 🗺️ Roadmap
+## 🗺️ Potential follow-ups
 
-- ✅ Azure Container Apps deployment (compute, endpoints, container registry, managed identity)
-- 🔨 Database resources (Redis, PostgreSQL, SQL Server) → Azure-managed equivalents
-- 📋 Additional providers (AWS, Kubernetes)
+The current implementation focuses on Azure Container Apps. Possible future work includes:
+
+- 🔨 Additional resource translations for data services and other Aspire compute patterns
+- 📋 Additional cloud providers beyond Azure
 
 ## 🧪 Samples
 
