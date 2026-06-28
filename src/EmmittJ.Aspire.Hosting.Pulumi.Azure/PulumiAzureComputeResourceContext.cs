@@ -1,4 +1,4 @@
-// Licensed under the MIT License.
+// Licensed under the Apache License, Version 2.0.
 
 using Aspire.Hosting.ApplicationModel;
 using EmmittJ.Aspire.Hosting.Pulumi;
@@ -15,31 +15,52 @@ namespace EmmittJ.Aspire.Hosting.Pulumi.Azure;
 /// </summary>
 public sealed class PulumiAzureComputeResourceContext : PulumiComputeResourceContext
 {
+    private readonly PulumiAzureEnvironmentContext _environmentContext;
     private readonly PulumiAzureEnvironmentResource _environment;
 
+    private bool _endpointsProcessed;
     private (int? Port, bool Http2, bool External)? _httpIngress;
     private readonly Dictionary<string, EndpointMapping> _endpointMapping = [];
 
-    private readonly record struct EndpointMapping(string Scheme, string Host, int Port, int? TargetPort, bool IsHttpIngress, bool External);
+    private readonly record struct EndpointMapping(
+        string Scheme, string Host, int Port, int? TargetPort, bool IsHttpIngress, bool External, bool TlsEnabled);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PulumiAzureComputeResourceContext"/> class.
     /// </summary>
     /// <param name="computeResource">The source Aspire compute resource.</param>
-    /// <param name="publishingContext">The publishing context.</param>
-    /// <param name="environment">The Azure environment resource.</param>
-    public PulumiAzureComputeResourceContext(
+    /// <param name="environmentContext">The per-deploy environment context that owns sibling contexts.</param>
+    internal PulumiAzureComputeResourceContext(
         IComputeResource computeResource,
-        PulumiPublishingContext publishingContext,
-        PulumiAzureEnvironmentResource environment)
-        : base(computeResource, publishingContext)
+        PulumiAzureEnvironmentContext environmentContext)
+        : base(computeResource, environmentContext.PublishingContext)
     {
-        _environment = environment;
+        _environmentContext = environmentContext;
+        _environment = environmentContext.Environment;
     }
+
+    /// <summary>
+    /// Ensures this resource's endpoint mappings have been computed. Safe to call multiple times; only the
+    /// first call does work. Used so a sibling can resolve this resource's addressing before it is built.
+    /// </summary>
+    internal void EnsureEndpointsProcessed() => ProcessEndpoints();
+
+    /// <summary>Gets the endpoint mapping for a named endpoint, if this resource exposes it.</summary>
+    private bool TryGetEndpointMapping(string endpointName, out EndpointMapping mapping) =>
+        _endpointMapping.TryGetValue(endpointName, out mapping);
 
     /// <inheritdoc />
     protected override void ProcessEndpoints()
     {
+        // Idempotent: mappings may be computed eagerly (so siblings can reference this resource) and again
+        // during ProcessResourceAsync. Only compute them once.
+        if (_endpointsProcessed)
+        {
+            return;
+        }
+
+        _endpointsProcessed = true;
+
         if (!ComputeResource.TryGetEndpoints(out var endpoints))
         {
             return;
@@ -105,7 +126,8 @@ public sealed class PulumiAzureComputeResourceContext : PulumiComputeResourceCon
             {
                 var endpoint = resolved.Endpoint;
                 var port = endpoint.UriScheme is "http" ? 80 : 443;
-                _endpointMapping[endpoint.Name] = new(endpoint.UriScheme, NormalizedName, port, targetPort, IsHttpIngress: true, httpIngress.External);
+                // HTTP ingress is served over HTTPS by Container Apps regardless of the declared scheme.
+                _endpointMapping[endpoint.Name] = new(endpoint.UriScheme, NormalizedName, port, targetPort, IsHttpIngress: true, httpIngress.External, TlsEnabled: true);
             }
         }
 
@@ -114,7 +136,7 @@ public sealed class PulumiAzureComputeResourceContext : PulumiComputeResourceCon
             foreach (var resolved in g.ResolvedEndpoints)
             {
                 var endpoint = resolved.Endpoint;
-                _endpointMapping[endpoint.Name] = new(endpoint.UriScheme, NormalizedName, resolved.ExposedPort, g.Port, IsHttpIngress: false, g.External);
+                _endpointMapping[endpoint.Name] = new(endpoint.UriScheme, NormalizedName, resolved.ExposedPort, g.Port, IsHttpIngress: false, g.External, TlsEnabled: endpoint.UriScheme is "https");
             }
         }
     }
@@ -209,45 +231,107 @@ public sealed class PulumiAzureComputeResourceContext : PulumiComputeResourceCon
     }
 
     /// <inheritdoc />
-    protected override Output<string> ResolveEndpoint(EndpointReference endpoint)
-    {
-        if (IsSelf(endpoint.Resource) && _endpointMapping.TryGetValue(endpoint.EndpointName, out var mapping))
-        {
-            return Output.Create($"{mapping.Scheme}://{mapping.Host}");
-        }
-
-        var host = _environment.GetHostAddressExpression(endpoint);
-        return Output.Create($"{endpoint.Scheme}://{host.Format}");
-    }
+    protected override Output<string> ResolveEndpoint(EndpointReference endpoint) =>
+        ResolveEndpointProperty(endpoint, EndpointProperty.Url);
 
     /// <inheritdoc />
-    protected override Output<string> ResolveEndpointExpression(EndpointReferenceExpression expression)
-    {
-        var endpoint = expression.Endpoint;
+    protected override Output<string> ResolveEndpointExpression(EndpointReferenceExpression expression) =>
+        ResolveEndpointProperty(expression.Endpoint, expression.Property);
 
-        if (IsSelf(endpoint.Resource) && _endpointMapping.TryGetValue(endpoint.EndpointName, out var mapping))
+    /// <summary>
+    /// Resolves an endpoint property for the resource that owns the endpoint, which may be this resource or a
+    /// sibling deployed to the same environment. Falls back to a best-effort host when the owner is not a
+    /// compute resource targeted to this environment (for example a cross-environment reference).
+    /// </summary>
+    private Output<string> ResolveEndpointProperty(EndpointReference endpoint, EndpointProperty property)
+    {
+        // Look up the context for the resource that owns the endpoint. For a sibling this reads its
+        // mappings, which were computed eagerly when the environment registered every targeted resource.
+        var ownerContext = IsSelf(endpoint.Resource)
+            ? this
+            : _environmentContext.TryGetContext(endpoint.Resource);
+
+        if (ownerContext is not null)
         {
-            return expression.Property switch
+            ownerContext.EnsureEndpointsProcessed();
+            if (ownerContext.TryGetEndpointMapping(endpoint.EndpointName, out var mapping))
             {
-                EndpointProperty.Url => mapping.IsHttpIngress
-                    ? Output.Create($"{mapping.Scheme}://{mapping.Host}")
-                    : Output.Create($"{mapping.Scheme}://{mapping.Host}:{mapping.Port}"),
-                EndpointProperty.Host or EndpointProperty.IPV4Host => Output.Create(mapping.Host),
-                EndpointProperty.Port => Output.Create(mapping.Port.ToString()),
-                EndpointProperty.TargetPort => Output.Create(mapping.TargetPort?.ToString() ?? "8080"),
-                EndpointProperty.HostAndPort => Output.Create($"{mapping.Host}:{mapping.Port}"),
-                EndpointProperty.Scheme => Output.Create(mapping.Scheme),
-                EndpointProperty.TlsEnabled => Output.Create(mapping.Scheme is "https" ? "true" : "false"),
-                _ => throw new NotSupportedException($"Endpoint property '{expression.Property}' is not supported."),
-            };
+                // DefaultDomain is shared across the environment, so any context can compose the value.
+                return GetEndpointValue(mapping, property);
+            }
         }
 
-        return expression.Property switch
+        return FallbackEndpointValue(endpoint, property);
+    }
+
+    /// <summary>
+    /// Composes an endpoint property value from a mapping, mirroring Azure Container Apps' addressing:
+    /// external HTTP ingress resolves to <c>{app}.{defaultDomain}</c>, internal HTTP ingress to
+    /// <c>{app}.internal.{defaultDomain}</c>, and non-HTTP endpoints to the app's internal DNS name.
+    /// </summary>
+    private Output<string> GetEndpointValue(EndpointMapping mapping, EndpointProperty property)
+    {
+        var (scheme, host, port, targetPort, isHttpIngress, external, tlsEnabled) = mapping;
+
+        // The default domain is only known after the managed environment is provisioned, so HTTP-ingress
+        // hosts must be composed lazily from the Output rather than as a literal string.
+        Output<string> GetHost(string prefix = "", string suffix = "")
         {
-            EndpointProperty.Url => ResolveEndpoint(endpoint),
-            EndpointProperty.Host or EndpointProperty.IPV4Host => Output.Create(endpoint.Resource.Name.ToLowerInvariant()),
+            if (isHttpIngress)
+            {
+                return _environmentContext.DefaultDomain.Apply(domain =>
+                    $"{prefix}{BuildFqdnHost(host, httpIngress: true, external, domain)}{suffix}");
+            }
+
+            return Output.Create($"{prefix}{host}{suffix}");
+        }
+
+        return property switch
+        {
+            EndpointProperty.Url => GetHost($"{scheme}://", isHttpIngress ? "" : $":{port}"),
+            EndpointProperty.Host or EndpointProperty.IPV4Host => GetHost(),
+            EndpointProperty.Port => Output.Create(port.ToString()),
+            EndpointProperty.HostAndPort => GetHost(suffix: $":{port}"),
+            EndpointProperty.TargetPort => Output.Create(targetPort?.ToString() ?? "8080"),
+            EndpointProperty.Scheme => Output.Create(scheme),
+            EndpointProperty.TlsEnabled => Output.Create(tlsEnabled ? "true" : "false"),
+            _ => throw new NotSupportedException($"Endpoint property '{property}' is not supported."),
+        };
+    }
+
+    /// <summary>
+    /// Builds the host portion of an Azure Container Apps endpoint. This is a pure function so the FQDN
+    /// formula can be unit-tested without a Pulumi engine.
+    /// </summary>
+    /// <param name="appName">The normalized container app name.</param>
+    /// <param name="httpIngress">Whether the endpoint is served through HTTP ingress.</param>
+    /// <param name="external">Whether the ingress is external (public) or internal.</param>
+    /// <param name="defaultDomain">The managed environment's default domain.</param>
+    internal static string BuildFqdnHost(string appName, bool httpIngress, bool external, string defaultDomain)
+    {
+        if (!httpIngress)
+        {
+            // Non-HTTP (TCP) endpoints are reachable by the app's internal DNS name within the environment.
+            return appName;
+        }
+
+        return external
+            ? $"{appName}.{defaultDomain}"
+            : $"{appName}.internal.{defaultDomain}";
+    }
+
+    private Output<string> FallbackEndpointValue(EndpointReference endpoint, EndpointProperty property)
+    {
+        // The endpoint owner is not a compute resource in this environment (e.g. a cross-environment
+        // reference). Cross-environment endpoint resolution is not implemented; use a best-effort host.
+        var host = _environment.GetHostAddressExpression(endpoint);
+
+        return property switch
+        {
+            EndpointProperty.Url => Output.Create($"{endpoint.Scheme}://{host.Format}"),
+            EndpointProperty.Host or EndpointProperty.IPV4Host => Output.Create(host.Format),
             EndpointProperty.Port or EndpointProperty.TargetPort => Output.Create(endpoint.TargetPort?.ToString() ?? "8080"),
-            EndpointProperty.HostAndPort => Output.Create($"{endpoint.Resource.Name.ToLowerInvariant()}:{endpoint.TargetPort?.ToString() ?? "8080"}"),
+            EndpointProperty.HostAndPort => Output.Create($"{host.Format}:{endpoint.TargetPort?.ToString() ?? "8080"}"),
             EndpointProperty.Scheme => Output.Create(endpoint.Scheme),
             EndpointProperty.TlsEnabled => Output.Create(endpoint.Scheme is "https" ? "true" : "false"),
             _ => Output.Create(string.Empty),

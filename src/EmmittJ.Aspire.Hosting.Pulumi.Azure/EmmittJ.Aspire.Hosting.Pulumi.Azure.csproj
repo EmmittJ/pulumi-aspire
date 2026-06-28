@@ -18,4 +18,8 @@
     <PackageReference Include="Pulumi.Random" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="EmmittJ.Aspire.Hosting.Pulumi.Tests" />
+  </ItemGroup>
+
 </Project>

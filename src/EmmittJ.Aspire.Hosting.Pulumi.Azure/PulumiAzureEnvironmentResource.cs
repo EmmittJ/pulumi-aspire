@@ -75,8 +75,9 @@ public sealed class PulumiAzureEnvironmentResource : PulumiEnvironmentResource
     /// <inheritdoc />
     public override ReferenceExpression GetHostAddressExpression(EndpointReference endpointReference)
     {
-        // Placeholder host. The real default domain is resolved by Azure and exposed via the app FQDN output;
-        // surfacing it here is deferred to a follow-up so cross-resource URLs use the app's own FQDN output.
+        // Best-effort fallback host used only for endpoints whose owner is not a compute resource in this
+        // environment (for example a cross-environment reference). Same-environment endpoints resolve to the
+        // managed environment's real default domain via PulumiAzureComputeResourceContext.
         var resource = endpointReference.Resource;
         return ReferenceExpression.Create($"{resource.Name.ToLowerInvariant()}.azurecontainerapps.io");
     }
@@ -96,9 +97,20 @@ public sealed class PulumiAzureEnvironmentResource : PulumiEnvironmentResource
 
         CreateAcrPullRoleAssignment(managedIdentity);
 
+        var environmentContext = new PulumiAzureEnvironmentContext(this, context, managedEnvironment.DefaultDomain);
+
+        // Phase 1: register a context for every targeted resource so endpoint mappings exist before any
+        // Container App is built. This mirrors how Azure Container Apps registers all contexts during prepare
+        // and then defers BuildContainerApp, ensuring cross-resource endpoint references can be resolved.
+        var targetedContexts = new List<PulumiAzureComputeResourceContext>();
         foreach (var compute in context.GetTargetedComputeResources())
         {
-            var computeContext = new PulumiAzureComputeResourceContext(compute, context, this);
+            targetedContexts.Add(environmentContext.GetOrCreateContext(compute));
+        }
+
+        // Phase 2: build each Container App. Environment-variable resolution can now read sibling mappings.
+        foreach (var computeContext in targetedContexts)
+        {
             await computeContext.ProcessResourceAsync().ConfigureAwait(false);
         }
 
