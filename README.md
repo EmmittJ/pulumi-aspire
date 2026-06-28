@@ -16,21 +16,6 @@ Deploy Aspire applications to cloud infrastructure using Pulumi's Infrastructure
 - 🏗️ **Infrastructure as Code** – Full Pulumi stack management, state, and drift detection
 - 🔌 **Extensible** – Add cloud providers via NuGet packages, not code changes
 
-```csharp
-var builder = DistributedApplication.CreateBuilder(args);
-
-// Add Pulumi Azure environment
-var azure = builder.AddPulumiAzureEnvironment("dev", "my-app")
-    .WithLocation("eastus");
-
-// Your Aspire resources - automatically deployed to Azure Container Apps
-var cache = builder.AddRedis("cache");
-var api = builder.AddProject<Projects.Api>("api")
-    .WithReference(cache);
-
-builder.Build().Run();
-```
-
 ## 📦 Packages
 
 | Package | Description | NuGet |
@@ -94,34 +79,21 @@ aspire deploy
 
 ## 🏗️ Architecture
 
-Pulumi Aspire uses **SDK Packages (.NET NuGet packages)** that integrate with Aspire's model using Pulumi's Automation API:
+Pulumi Aspire implements Aspire's deployment-target pattern (the same model as the built-in Azure Container Apps, Kubernetes, and Docker Compose integrations) and uses Pulumi's Automation API for stack operations:
 
-- **Core Package** – Base classes, pipeline steps, and Automation API runner infrastructure
-- **Provider Packages** – Cloud-specific resource translation (Azure, AWS, etc.)
+- **Core package** – the compute-environment base class, per-resource deployment targets, value/secret resolver, container-registry base, and the Automation API runner
+- **Provider packages** – cloud-specific resource translation (Azure today)
 
-### Design Principles
-
-1. **Translation in C#** – All resource translation happens in SDK packages
-2. **Automation API-First** – Uses Pulumi's Automation API directly for stack operations
-3. **Aspire-Native Patterns** – Follows Aspire's pipeline steps, event subscribers, and compute environments
-
-For detailed architecture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details.
 
 ## 📋 Commands
 
-### Primary Commands
-
 | Command | Description |
 |---------|-------------|
-| `aspire run` | Run locally with Aspire's development experience |
-| `aspire deploy` | Deploy to cloud using Pulumi Automation API |
-
-### Aspire Pipeline Steps
-
-| Command | Description |
-|---------|-------------|
-| `aspire do pulumi-preview-{env}` | Preview changes for a specific environment |
-| `aspire do pulumi-destroy-{env}` | Destroy resources for a specific environment |
+| `aspire run` | Run locally; the Pulumi environment and registry stay out of the dashboard |
+| `aspire publish` | Write a reviewable `pulumi preview` artifact to the output directory |
+| `aspire deploy` | Provision the registry, push images, and run `pulumi up` |
+| `aspire destroy` | Run `pulumi destroy` for the environment and its registry |
 
 ## ⚙️ Configuration
 
@@ -155,31 +127,9 @@ builder.AddPulumiAzureEnvironment("prod", "my-app");    // Stack: my-app/my-app-
 
 ## 🗺️ Roadmap
 
-### ✅ Phase 1: Foundation (Complete)
-
-- [x] Core package with Automation API
-- [x] Azure Container Apps translation
-- [x] Pipeline steps (deploy, preview, destroy)
-- [x] DI-injectable runner infrastructure
-
-### 🔨 Phase 2: Databases
-
-- [ ] Redis → Azure Redis Cache
-- [ ] PostgreSQL → Azure PostgreSQL
-- [ ] SQL Server → Azure SQL
-- [ ] Connection string propagation
-
-### 📋 Phase 3: AWS Provider
-
-- [ ] `EmmittJ.Aspire.Hosting.Pulumi.Aws`
-- [ ] ECS/Fargate for compute
-- [ ] ElastiCache, RDS for databases
-
-### 📋 Phase 4: Kubernetes Provider
-
-- [ ] `EmmittJ.Aspire.Hosting.Pulumi.Kubernetes`
-- [ ] Deployments, Services
-- [ ] Helm Charts for databases
+- ✅ Azure Container Apps deployment (compute, endpoints, container registry, managed identity)
+- 🔨 Database resources (Redis, PostgreSQL, SQL Server) → Azure-managed equivalents
+- 📋 Additional providers (AWS, Kubernetes)
 
 ## 🧪 Samples
 

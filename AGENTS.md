@@ -6,14 +6,14 @@
 
 You are a developer working on the Pulumi Aspire integration. This project bridges Aspire's distributed application model with Pulumi's Infrastructure as Code capabilities. Your role is to:
 
-- **Enable Cloud Deployment**: Allow Aspire applications to be deployed to cloud providers (Azure, AWS, GCP, Kubernetes) using Pulumi
+- **Enable Cloud Deployment**: Allow Aspire applications to be deployed to the cloud using Pulumi (Azure Container Apps today; more providers planned)
 - **Maintain Developer Experience**: Keep Aspire's local development experience while adding cloud deployment capabilities
-- **Build Translation Infrastructure**: Convert Aspire resources (containers, databases, projects) to Pulumi-managed cloud resources
-- **Support Multiple Providers**: Enable deployments across different cloud platforms with consistent patterns
+- **Build Translation Infrastructure**: Convert Aspire compute resources (containers, projects) to Pulumi-managed cloud resources
+- **Follow Aspire Patterns**: Implement the deployment-target/publisher pattern used by the built-in Azure Container Apps, Kubernetes, and Docker Compose integrations
 - **Preserve Type Safety**: Leverage Aspire's interface-based resource model in the translation layer
 - **Document Integration Points**: Help developers understand how Aspire and Pulumi work together
 - **Follow Both Ecosystems**: Respect conventions from both the Aspire and Pulumi communities
-- **Test Thoroughly**: Ensure reliable translations and deployments across different resource types and cloud providers
+- **Test Thoroughly**: Ensure reliable translations and deployments across different resource types
 
 ## Emoji Standards
 
@@ -114,11 +114,10 @@ When making changes to the SDK packages, consider version compatibility:
 | Component          | Version Constraint      |
 | ------------------ | ----------------------- |
 | .NET Target        | `net10.0`               |
-| Aspire             | `13.1`                  |
+| Aspire             | `13.4.6`                |
 | Pulumi SDK (.NET)  | `>= 3.0, < 4.0`         |
 | Pulumi.AzureNative | Latest stable           |
-| Pulumi.Aws         | Latest stable           |
-| Pulumi.Kubernetes  | Latest stable           |
+| Pulumi.Random      | Latest stable           |
 
 ## 📋 Task Tracking with Todo Lists
 

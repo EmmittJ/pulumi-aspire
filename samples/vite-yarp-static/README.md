@@ -46,9 +46,9 @@ aspire deploy
 | Command | Description |
 |---------|-------------|
 | `aspire run` | Run locally with Vite HMR |
+| `aspire publish` | Write a reviewable `pulumi preview` artifact |
 | `aspire deploy` | Deploy to Azure via Pulumi Automation API |
-| `aspire do pulumi-preview-dev` | Preview changes |
-| `aspire do pulumi-destroy-dev` | Tear down resources |
+| `aspire destroy` | Tear down resources |
 
 ## Key Aspire Patterns
 

@@ -1,302 +1,61 @@
-# Pulumi Aspire - Architecture
-
-## Overview
+# Architecture
 
-**Pulumi Aspire** enables Aspire applications to be deployed to cloud infrastructure using Pulumi. The architecture is centered on a single integration layer:
-
-1. **SDK Packages (.NET)**: NuGet packages that integrate with Aspire's model and use Pulumi's Automation API for stack operations
-
-## Design Principles
-
-### 1. Translation in C#
+Pulumi Aspire deploys Aspire compute resources to the cloud using Pulumi's [Automation API](https://www.pulumi.com/docs/guides/automation-api/). It implements Aspire's deployment-target/publisher pattern — the same model used by the built-in Azure Container Apps, Kubernetes, and Docker Compose integrations — so it participates in `aspire run`, `aspire publish`, and `aspire deploy` like any first-party compute environment.
 
-All resource translation happens in the SDK packages (C#):
+## Packages
 
-- **Adding cloud providers = adding NuGet packages**
-- **Full access to Aspire's type system** (interfaces, annotations, DI)
-- **Uses Pulumi Automation API directly** for stack operations
-- **Deployment flow is centralized** in the .NET SDK and shared hosting abstractions
-
-### 2. Automation API-First
+| Package | Responsibility |
+| --- | --- |
+| `EmmittJ.Aspire.Hosting.Pulumi` | Provider-agnostic core: the compute-environment base class, deployment-target resource, value/secret resolver, container-registry base, output references, and the Automation API runner. |
+| `EmmittJ.Aspire.Hosting.Pulumi.Azure` | Azure Container Apps provider: translates compute resources to `ContainerApp` resources and provisions the supporting Azure infrastructure. |
 
-We use Pulumi's **Automation API** rather than relying on an external language host protocol:
-
-- The base `PulumiEnvironmentResource` handles all Automation API orchestration
-- Provider packages only implement `CreateResourcesAsync()` to create cloud resources
-- Stack lifecycle (create, up, preview, destroy) is managed by the base class
-
-### 3. Aspire-Native Patterns
-
-We follow Aspire's established patterns:
-
-- **Pipeline Steps** via `PipelineStepAnnotation` (not the obsolete `IDistributedApplicationPublisher`)
-- **Event Subscribers** via `IDistributedApplicationEventingSubscriber`
-- **Compute Environments** via `IComputeEnvironmentResource`
-- **Simple Output References** matching `BicepOutputReference` pattern
-
-## Package Structure
-
-```
-pulumi-aspire/
-├── src/
-│   ├── EmmittJ.Aspire.Hosting.Pulumi/           # Core package
-│   │   ├── IPulumiEnvironmentResource.cs        # Compute environment interface
-│   │   ├── PulumiEnvironmentResource.cs         # Base class with Automation API
-│   │   ├── PulumiPublishingContext.cs           # Context for resource creation
-│   │   ├── PulumiOutputReference.cs             # Output reference
-│   │   ├── PulumiAnnotations.cs                 # Resource annotations
-│   │   ├── PulumiComputeResourceContext.cs      # Compute resource helpers
-│   │   └── PulumiProvisioningResource.cs        # Provisioning resource
-│   │
-│   └── EmmittJ.Aspire.Hosting.Pulumi.Azure/     # Azure provider package
-│       ├── PulumiAzureEnvironmentResource.cs    # Azure Container Apps
-│       ├── PulumiAzureExtensions.cs             # Extension methods
-│       ├── PulumiAzureInfrastructure.cs         # Event subscriber
-│       └── PulumiAzureContainerAppCustomizationAnnotation.cs
-├── tests/
-│   └── EmmittJ.Aspire.Hosting.Pulumi.Tests/
-└── samples/
-    └── SampleAppHost/
-```
-
-## Key Components
-
-### 1. IPulumiEnvironmentResource
-
-Marker interface for Pulumi-managed compute environments:
-
-```csharp
-public interface IPulumiEnvironmentResource : IComputeEnvironmentResource
-{
-    string StackName => Name;           // Stack name = resource name
-    string? ProjectName { get; }
-    Task CreateResourcesAsync(PulumiPublishingContext context);
-}
-```
-
-### 2. PulumiEnvironmentResource (Base Class)
-
-Handles all Automation API orchestration:
-
-```csharp
-public abstract class PulumiEnvironmentResource : Resource, IPulumiEnvironmentResource
-{
-    protected PulumiEnvironmentResource(string name) : base(name)
-    {
-        // Register pipeline steps
-        Annotations.Add(new PipelineStepAnnotation(CreatePipelineStepsAsync));
-    }
-
-    // Pipeline steps: deploy, preview, destroy, print-summary
-    protected virtual async Task<IEnumerable<PipelineStep>> CreatePipelineStepsAsync(...);
-
-    // Automation API operations
-    protected virtual async Task<WorkspaceStack> GetOrCreateStackAsync(...);
-    protected virtual async Task DeployAsync(PipelineStepContext context);
-    protected virtual async Task PreviewAsync(PipelineStepContext context);
-    protected virtual async Task DestroyAsync(PipelineStepContext context);
-
-    // Provider-specific (abstract)
-    public abstract Task CreateResourcesAsync(PulumiPublishingContext context);
-}
-```
-
-**Key Design Points:**
-- Uses `PulumiFn.Create()` for inline Pulumi programs
-- Pipeline steps integrate with Aspire's DAG-based execution
-- Provider packages only override `CreateResourcesAsync()`
-
-### 3. PulumiPublishingContext
-
-Context passed to providers during resource creation:
-
-```csharp
-public sealed class PulumiPublishingContext
-{
-    // Aspire model access
-    public DistributedApplicationModel Model { get; }
-    public IPulumiEnvironmentResource Environment { get; }
-    public ILogger Logger { get; }
-
-    // Resource tracking
-    public IReadOnlyDictionary<IResource, PulumiResource> TranslatedResources { get; }
-    public void RegisterResource(IResource aspire, PulumiResource pulumi);
-    public T? GetResource<T>(IResource aspire) where T : PulumiResource;
-
-    // Stack outputs
-    public void AddOutput(string name, Output<string> value);
-    public void AddOutput(string name, string value);
-    public IDictionary<string, object?> BuildOutputs();
-}
-```
-
-### 4. PulumiOutputReference
-
-Simple reference to Pulumi outputs (matches Aspire's `BicepOutputReference` pattern):
-
-```csharp
-public sealed class PulumiOutputReference(string name, IResource resource)
-    : IManifestExpressionProvider, IValueWithReferences
-{
-    public string Name { get; }
-    public IResource Resource { get; }
-    public Output<string>? Output { get; set; }
-    public string? Value { get; internal set; }
-    public string ValueExpression => $"{{{Resource.Name}.outputs.{Name}}}";
-}
-```
-
-## Azure Provider Implementation
-
-### PulumiAzureEnvironmentResource
-
-```csharp
-public class PulumiAzureEnvironmentResource : PulumiEnvironmentResource
-{
-    public string Location { get; set; } = "eastus";
-    public string? ResourceGroupName { get; set; }
-    public string? ManagedEnvironmentName { get; set; }
-
-    public override async Task CreateResourcesAsync(PulumiPublishingContext context)
-    {
-        // Create shared infrastructure
-        var resourceGroup = GetOrCreateResourceGroup(context);
-        var managedEnvironment = GetOrCreateManagedEnvironment(context, resourceGroup);
-
-        // Process each compute resource
-        foreach (var resource in context.Model.GetComputeResources())
-        {
-            if (resource is IComputeResource computeResource)
-            {
-                await CreateContainerAppAsync(context, computeResource, 
-                    resourceGroup, managedEnvironment);
-            }
-        }
-
-        // Export outputs
-        context.AddOutput("resourceGroupName", resourceGroup.Name);
-        context.AddOutput("managedEnvironmentName", managedEnvironment.Name);
-    }
-}
-```
-
-### Extension Methods
-
-```csharp
-public static class PulumiAzureExtensions
-{
-    public static IResourceBuilder<PulumiAzureEnvironmentResource> AddPulumiAzureEnvironment(
-        this IDistributedApplicationBuilder builder,
-        [ResourceName] string name)
-    {
-        var resource = new PulumiAzureEnvironmentResource(name);
-        builder.Services.AddSingleton(resource);
-        builder.Services.TryAddEnumerable(
-            ServiceDescriptor.Singleton<IDistributedApplicationEventingSubscriber, 
-                PulumiAzureInfrastructure>());
-        return builder.AddResource(resource);
-    }
-
-    public static IResourceBuilder<PulumiAzureEnvironmentResource> WithLocation(...);
-    public static IResourceBuilder<PulumiAzureEnvironmentResource> WithResourceGroup(...);
-    public static IResourceBuilder<T> PublishAsPulumiContainerApp<T>(...);
-}
-```
-
-### Annotations
-
-```csharp
-// Skip during Pulumi translation
-public sealed class SkipPulumiTranslationAnnotation : IResourceAnnotation;
-
-// Pulumi resource options
-public sealed record PulumiOptionsAnnotation(CustomResourceOptions? Options) : IResourceAnnotation;
-
-// Customize Pulumi resources
-public class PulumiCustomizationAnnotation<TResource> : IResourceAnnotation
-    where TResource : Pulumi.Resource;
-```
-
-## Developer Workflow
-
-```bash
-# Local development - unchanged
-aspire run
-
-# Cloud deployment
-aspire deploy                          # Uses Pulumi Automation API
-
-# Other operations
-aspire do pulumi-preview-{env}         # Preview changes
-aspire do pulumi-destroy-{env}         # Destroy resources
-```
-
-## Environment Name = Stack Name
-
-```csharp
-builder.AddPulumiAzureEnvironment("dev");      // → stack "dev"
-builder.AddPulumiAzureEnvironment("staging");  // → stack "staging"
-builder.AddPulumiAzureEnvironment("prod");     // → stack "prod"
-```
-
-## Resource Mapping
-
-### Current (Implemented)
-
-| Aspire Resource | Azure Resource |
-|-----------------|----------------|
-| `IComputeResource` | `Azure.App.ContainerApp` |
-| Container images | Deployed to Container Apps |
-| HTTP endpoints | Container Apps ingress |
-
-### Future (Planned)
-
-| Resource Type | Azure | AWS | Kubernetes |
-|--------------|-------|-----|------------|
-| `PostgresServerResource` | PostgreSQL FlexibleServer | RDS | Helm Chart |
-| `RedisResource` | Redis Cache | ElastiCache | Helm Chart |
-| `SqlServerServerResource` | Azure SQL | RDS | Helm Chart |
-
-## Implementation Status
-
-### Phase 1: Foundation ✅
-
-- [x] Core package with Automation API
-- [x] `IPulumiEnvironmentResource` interface
-- [x] `PulumiEnvironmentResource` base class
-- [x] `PulumiPublishingContext`
-- [x] `PulumiOutputReference` (simplified)
-- [x] Pipeline steps (deploy, preview, destroy)
-- [x] Azure Container Apps translation
-
-### Phase 2: Databases (Planned)
-
-- [ ] Redis → Azure Redis Cache
-- [ ] PostgreSQL → Azure PostgreSQL
-- [ ] SQL Server → Azure SQL
-- [ ] Connection string propagation
-
-### Phase 3: AWS Provider (Planned)
-
-- [ ] `EmmittJ.Aspire.Hosting.Pulumi.Aws`
-- [ ] ECS/Fargate for compute
-- [ ] ElastiCache, RDS for databases
-
-### Phase 4: Kubernetes Provider (Planned)
-
-- [ ] `EmmittJ.Aspire.Hosting.Pulumi.Kubernetes`
-- [ ] Deployments, Services
-- [ ] Helm Charts for databases
-
-## Dependencies
-
-| Package | Dependencies |
-|---------|--------------|
-| Core | `Pulumi`, `Pulumi.Automation`, `Aspire.Hosting` |
-| Azure | Core + `Pulumi.AzureNative` |
+## Core types
+
+| Type | Role |
+| --- | --- |
+| `PulumiEnvironmentResource` | Abstract `IComputeEnvironmentResource`. Owns the pipeline steps and the inline Pulumi program. Providers implement `CreateStackResourcesAsync`. |
+| `PulumiDeploymentTargetResource` | The per-compute-resource target attached via `DeploymentTargetAnnotation`. Holds output references and a print-summary step. Not added to the model. |
+| `PulumiComputeResourceContext` | Abstract per-resource translator. Collects environment variables, args, and endpoints, and resolves Aspire structured values to Pulumi `Output<T>` (wrapping secrets). Providers build the cloud resource. |
+| `PulumiContainerRegistryResource` | Abstract registry provisioned as its own Pulumi stack so images can be pushed before the environment deploys. |
+| `PulumiOutputReference` | Deferred reference to a stack output (the Pulumi analogue of `BicepOutputReference`), resolved after deploy. |
+| `PulumiRunner` | Thin wrapper over the Automation API for `up`, `preview`, and `destroy`. |
+
+## Pipeline lifecycle
+
+The environment registers its steps through a `PipelineStepAnnotation`, and each deployment target's steps are expanded into the pipeline during step collection. Build and push steps are created automatically by Aspire for project and container resources, so the integration does not create them.
+
+- **prepare** (`DependsOn ValidateComputeEnvironments`, `RequiredBy BeforeStart`) — publish-only. Creates a `PulumiDeploymentTargetResource` per targeted compute resource and attaches a `DeploymentTargetAnnotation`.
+- **publish** (`DependsOn PublishPrereq`, `RequiredBy Publish`) — writes a reviewable `pulumi preview` artifact to the environment output directory without deploying.
+- **deploy** (`DependsOn Push`, `RequiredBy Deploy`) — runs `pulumi up`, then back-propagates stack outputs into the output references.
+- **destroy** (`DependsOn DestroyPrereq`, `RequiredBy Destroy`) — runs `pulumi destroy`. The registry stack has its own destroy step so it is not orphaned.
+
+## Mode behavior
+
+| Mode | Behavior |
+| --- | --- |
+| Run | The environment and registry are **not** added to the model, so they never appear in the dashboard. |
+| Publish | The environment and registry are added to the model. The publish step emits a reviewable preview artifact. |
+| Deploy | The deploy step provisions the registry, lets the framework push images, then runs the inline Pulumi program to provision cloud resources. |
+
+## Value and secret resolution
+
+`PulumiComputeResourceContext` resolves Aspire structured values the same way the Azure Container Apps translator does, handling `string`, `EndpointReference`, `EndpointReferenceExpression`, `ParameterResource`, `ConnectionStringReference`, `IResourceWithConnectionString`, `ReferenceExpression`, `PulumiOutputReference`, and `IValueProvider`. Secret parameters and connection strings are wrapped with `Output.CreateSecret` so they are encrypted in Pulumi state rather than written as plaintext.
+
+## Container registry
+
+The Azure provider provisions an Azure Container Registry as a **separate Pulumi stack** before the environment deploys, so images can be built and pushed first. A user-assigned managed identity is granted `AcrPull`, and the Container Apps reference the registry through that identity. The registry is environment-owned and is destroyed alongside the environment.
+
+## Adding a provider
+
+A new cloud provider implements:
+
+1. A `PulumiEnvironmentResource` subclass whose `CreateStackResourcesAsync` provisions the provider's infrastructure and translates each targeted compute resource.
+2. A `PulumiComputeResourceContext` subclass that builds the provider's workload resource and resolves endpoints.
+3. A `PulumiContainerRegistryResource` subclass if the provider needs a registry.
+4. An `Add{Provider}Environment` extension method (in the `Aspire.Hosting` namespace) that applies the run/publish split and calls `AddPulumiInfrastructureCore`.
 
 ## References
 
-- [Aspire Hosting](https://github.com/dotnet/aspire/tree/main/src/Aspire.Hosting)
+- [Aspire](https://aspire.dev/)
 - [Pulumi Automation API](https://www.pulumi.com/docs/guides/automation-api/)
-- [pulumi-language-dotnet](https://github.com/pulumi/pulumi-dotnet/tree/main/pulumi-language-dotnet)
+
