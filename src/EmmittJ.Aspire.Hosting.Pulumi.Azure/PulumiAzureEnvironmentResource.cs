@@ -1,4 +1,4 @@
-// Licensed under the Apache License, Version 2.0.
+// Licensed under the MIT License.
 
 #pragma warning disable ASPIREPIPELINES001 // Pipeline APIs are experimental
 #pragma warning disable ASPIRECOMPUTE002  // IComputeEnvironmentResource is experimental

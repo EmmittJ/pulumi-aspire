@@ -1,4 +1,4 @@
-// Licensed under the Apache License, Version 2.0.
+// Licensed under the MIT License.
 
 #pragma warning disable ASPIREPIPELINES003 // ContainerImageReference is experimental
 

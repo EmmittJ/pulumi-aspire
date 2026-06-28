@@ -1,4 +1,4 @@
-// Licensed under the Apache License, Version 2.0.
+// Licensed under the MIT License.
 
 #pragma warning disable ASPIRECOMPUTE001 // GetComputeResources / compute-resource APIs are experimental
 
