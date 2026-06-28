@@ -1,47 +1,51 @@
 // Licensed under the Apache License, Version 2.0.
 
 using Aspire.Hosting.ApplicationModel;
-using Pulumi;
 
 namespace EmmittJ.Aspire.Hosting.Pulumi;
 
 /// <summary>
-/// A reference to an output from a Pulumi resource.
+/// A reference to a named output produced by a Pulumi stack for a given resource.
 /// </summary>
-/// <param name="name">The name of the output.</param>
-/// <param name="resource">The Aspire resource that owns the Pulumi output.</param>
 /// <remarks>
 /// <para>
-/// This is the Pulumi equivalent of Aspire's <c>BicepOutputReference</c>.
-/// It provides a simple way to reference outputs from Pulumi resources
-/// that may not be known until after deployment.
+/// This is the Pulumi analogue of Aspire's <c>BicepOutputReference</c>. It is created during model
+/// construction and can be passed into environment variables, args, and other structured values via
+/// <c>WithReference</c>/<c>WithEnvironment</c>. The concrete value is not known until the owning
+/// stack has been deployed.
+/// </para>
+/// <para>
+/// During <c>aspire publish</c> the reference projects to its <see cref="ValueExpression"/> placeholder.
+/// During <c>aspire deploy</c> the environment captures stack outputs and calls
+/// <see cref="SetValue(string?)"/>, which completes <see cref="GetValueAsync(CancellationToken)"/>.
 /// </para>
 /// </remarks>
-public sealed class PulumiOutputReference(string name, IResource resource) : IManifestExpressionProvider, IValueWithReferences
+public sealed class PulumiOutputReference : IManifestExpressionProvider, IValueProvider, IValueWithReferences
 {
-    private Output<string>? _output;
+    // Gated like BicepOutputReference: callers awaiting GetValueAsync block until the deploy step
+    // resolves the output (or the environment faults the reference).
+    private readonly TaskCompletionSource<string?> _valueSource =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>
-    /// Gets the name of the output.
+    /// Initializes a new instance of the <see cref="PulumiOutputReference"/> class.
     /// </summary>
-    public string Name { get; } = name;
-
-    /// <summary>
-    /// Gets the Aspire resource that owns this output.
-    /// </summary>
-    public IResource Resource { get; } = resource;
-
-    /// <summary>
-    /// Gets or sets the Pulumi output value.
-    /// </summary>
-    /// <remarks>
-    /// This is set during resource translation when the Pulumi resource is created.
-    /// </remarks>
-    public Output<string>? Output
+    /// <param name="name">The stack output name.</param>
+    /// <param name="resource">The Aspire resource that owns the output.</param>
+    public PulumiOutputReference(string name, IResource resource)
     {
-        get => _output;
-        set => _output = value;
+        Name = name;
+        Resource = resource;
     }
+
+    /// <summary>Gets the stack output name.</summary>
+    public string Name { get; }
+
+    /// <summary>Gets the Aspire resource that owns this output.</summary>
+    public IResource Resource { get; }
+
+    /// <summary>Gets the resolved output value once the owning stack has been deployed.</summary>
+    public string? Value { get; private set; }
 
     /// <inheritdoc />
     public string ValueExpression => $"{{{Resource.Name}.outputs.{Name}}}";
@@ -49,28 +53,32 @@ public sealed class PulumiOutputReference(string name, IResource resource) : IMa
     /// <inheritdoc />
     IEnumerable<object> IValueWithReferences.References => [Resource];
 
-    /// <summary>
-    /// Gets the resolved value of the output.
-    /// </summary>
-    /// <remarks>
-    /// This should only be called after deployment completes and outputs are available.
-    /// </remarks>
-    public string? Value { get; internal set; }
-
-    /// <summary>
-    /// Gets the output value, waiting for deployment if necessary.
-    /// </summary>
-    /// <param name="cancellationToken">A cancellation token.</param>
-    /// <returns>The output value, or null if not available.</returns>
-    public ValueTask<string?> GetValueAsync(CancellationToken cancellationToken = default)
+    /// <inheritdoc />
+    public async ValueTask<string?> GetValueAsync(CancellationToken cancellationToken = default)
     {
-        // If we already have a resolved value, return it
+        // Fast path: value already resolved (e.g. re-reads after deploy).
         if (Value is not null)
         {
-            return new ValueTask<string?>(Value);
+            return Value;
         }
 
-        // Otherwise return null - the value will be set after deployment
-        return new ValueTask<string?>((string?)null);
+        return await _valueSource.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Sets the resolved output value, completing any awaiters of <see cref="GetValueAsync(CancellationToken)"/>.
+    /// </summary>
+    /// <param name="value">The resolved value from the deployed stack outputs.</param>
+    public void SetValue(string? value)
+    {
+        Value = value;
+        _valueSource.TrySetResult(value);
+    }
+
+    /// <summary>
+    /// Faults the reference so that awaiters of <see cref="GetValueAsync(CancellationToken)"/> observe the failure
+    /// instead of hanging when the owning stack fails to produce the output.
+    /// </summary>
+    /// <param name="exception">The failure to propagate.</param>
+    public void SetException(Exception exception) => _valueSource.TrySetException(exception);
 }

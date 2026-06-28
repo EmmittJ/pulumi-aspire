@@ -3,6 +3,8 @@
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!-- The integration consumes Aspire APIs still marked [Experimental]. -->
+    <NoWarn>$(NoWarn);ASPIREPIPELINES001;ASPIREPIPELINES003;ASPIREPIPELINES004;ASPIRECOMPUTE001;ASPIRECOMPUTE002;ASPIRECOMPUTE003</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

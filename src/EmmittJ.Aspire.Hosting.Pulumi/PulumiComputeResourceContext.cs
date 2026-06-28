@@ -1,11 +1,10 @@
 // Licensed under the Apache License, Version 2.0.
 
-#pragma warning disable ASPIRECOMPUTE002 // Compute environment is experimental
 #pragma warning disable ASPIREPIPELINES003 // ContainerImageReference is experimental
 
+using System.Globalization;
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
-using Aspire.Hosting.Publishing;
 using Microsoft.Extensions.Logging;
 using Pulumi;
 using PulumiResource = Pulumi.Resource;
@@ -13,28 +12,30 @@ using PulumiResource = Pulumi.Resource;
 namespace EmmittJ.Aspire.Hosting.Pulumi;
 
 /// <summary>
-/// Abstract base class for processing Aspire compute resources into Pulumi resources.
-/// Provider-specific implementations handle the actual resource creation.
+/// Base class that translates a single Aspire compute resource into a provider-specific Pulumi resource.
 /// </summary>
 /// <remarks>
 /// <para>
-/// This class provides common functionality for processing environment variables,
-/// command-line arguments, endpoints, and other compute resource properties.
+/// The base class collects environment variables, command-line arguments, and endpoint metadata from the
+/// source resource and provides a shared value resolver that converts Aspire structured values
+/// (parameters, connection strings, endpoint references, reference expressions, Pulumi outputs) into
+/// Pulumi <see cref="Output{T}"/> values. Secret-bearing values are wrapped with
+/// <see cref="Output.CreateSecret{T}(T)"/> so they are encrypted in Pulumi state instead of being inlined
+/// as plaintext.
 /// </para>
 /// <para>
-/// Provider packages (Azure, AWS, Kubernetes) implement the abstract
-/// <see cref="BuildComputeResourceAsync"/> method to create provider-specific resources.
+/// Provider packages implement <see cref="BuildComputeResourceAsync"/> to create the cloud resource and the
+/// endpoint hooks (<see cref="ResolveEndpoint"/>, <see cref="ResolveEndpointExpression"/>) which depend on
+/// the target platform's addressing scheme.
 /// </para>
 /// </remarks>
 public abstract class PulumiComputeResourceContext
 {
-    private readonly List<EndpointInfo> _endpoints = [];
-
     /// <summary>
     /// Initializes a new instance of the <see cref="PulumiComputeResourceContext"/> class.
     /// </summary>
     /// <param name="computeResource">The source Aspire compute resource.</param>
-    /// <param name="publishingContext">The publishing context.</param>
+    /// <param name="publishingContext">The publishing context for the current deploy.</param>
     protected PulumiComputeResourceContext(
         IComputeResource computeResource,
         PulumiPublishingContext publishingContext)
@@ -43,95 +44,165 @@ public abstract class PulumiComputeResourceContext
         PublishingContext = publishingContext;
     }
 
-    /// <summary>
-    /// Gets the source Aspire compute resource.
-    /// </summary>
+    /// <summary>Gets the source Aspire compute resource.</summary>
     public IComputeResource ComputeResource { get; }
 
-    /// <summary>
-    /// Gets the publishing context.
-    /// </summary>
+    /// <summary>Gets the publishing context.</summary>
     public PulumiPublishingContext PublishingContext { get; }
 
-    /// <summary>
-    /// Gets the execution context.
-    /// </summary>
-    public DistributedApplicationExecutionContext ExecutionContext => PublishingContext.ExecutionContext;
+    /// <summary>Gets the execution context.</summary>
+    protected DistributedApplicationExecutionContext ExecutionContext => PublishingContext.ExecutionContext;
 
-    /// <summary>
-    /// Gets the logger instance.
-    /// </summary>
+    /// <summary>Gets the cancellation token.</summary>
+    protected CancellationToken CancellationToken => PublishingContext.CancellationToken;
+
+    /// <summary>Gets the logger.</summary>
     protected ILogger Logger => PublishingContext.Logger;
 
-    /// <summary>
-    /// Gets the resolved environment variables for the resource.
-    /// Keys are environment variable names, values are the raw value objects
-    /// (strings, <see cref="EndpointReference"/>, <see cref="ParameterResource"/>, etc.).
-    /// Resolution happens in <see cref="BuildComputeResourceAsync"/>.
-    /// </summary>
+    /// <summary>Gets the raw environment variable values collected from the resource, keyed by variable name.</summary>
     public Dictionary<string, object> EnvironmentVariables { get; } = [];
 
-    /// <summary>
-    /// Gets the command-line arguments for the resource.
-    /// Values are raw value objects that may need resolution.
-    /// </summary>
+    /// <summary>Gets the raw command-line argument values collected from the resource.</summary>
     public List<object> Args { get; } = [];
 
-    /// <summary>
-    /// Gets the collected endpoints.
-    /// </summary>
-    public IReadOnlyList<EndpointInfo> Endpoints => _endpoints;
-
-    /// <summary>
-    /// Gets the normalized resource name (lowercase, alphanumeric with hyphens).
-    /// </summary>
+    /// <summary>Gets the resource name normalized for cloud providers (lowercase, hyphenated).</summary>
     public string NormalizedName => NormalizeName(ComputeResource.Name);
 
     /// <summary>
-    /// Processes the compute resource and creates the provider-specific Pulumi resources.
+    /// Processes the compute resource: collects environment variables, arguments, and endpoints, builds the
+    /// provider-specific Pulumi resource, registers it, and applies customization annotations.
     /// </summary>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The created Pulumi resource.</returns>
-    public async Task<PulumiResource> ProcessResourceAsync(CancellationToken cancellationToken = default)
+    public async Task<PulumiResource> ProcessResourceAsync()
     {
-        Logger.LogDebug("Processing compute resource '{Name}'", ComputeResource.Name);
-
-        // Process common aspects
-        await ProcessEnvironmentVariablesAsync(cancellationToken).ConfigureAwait(false);
-        await ProcessArgumentsAsync(cancellationToken).ConfigureAwait(false);
+        await ProcessEnvironmentVariablesAsync().ConfigureAwait(false);
+        await ProcessArgumentsAsync().ConfigureAwait(false);
         ProcessEndpoints();
 
-        // Let the provider-specific implementation create the actual resource
-        var resource = await BuildComputeResourceAsync();
+        var resource = await BuildComputeResourceAsync().ConfigureAwait(false);
 
-        // Register the translated resource
-        PublishingContext.RegisterResource(ComputeResource, resource);
-
-        // Apply customization annotations
-        await ApplyCustomizationsAsync(resource);
-
-        Logger.LogInformation(
-            "Created Pulumi resource for '{Name}'",
-            ComputeResource.Name);
+        PublishingContext.RegisterTranslatedResource(ComputeResource, resource);
+        ApplyCustomizations(resource);
 
         return resource;
     }
 
-    /// <summary>
-    /// Creates the provider-specific Pulumi resource.
-    /// Implemented by provider packages (Azure, AWS, Kubernetes).
-    /// </summary>
-    /// <returns>The created Pulumi resource.</returns>
+    /// <summary>Creates the provider-specific Pulumi resource. Implemented by provider packages.</summary>
     protected abstract Task<PulumiResource> BuildComputeResourceAsync();
 
-    /// <summary>
-    /// Processes environment variables from the compute resource by invoking callbacks.
-    /// Stores raw values in <see cref="EnvironmentVariables"/> for later resolution.
-    /// </summary>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    protected virtual async Task ProcessEnvironmentVariablesAsync(CancellationToken cancellationToken = default)
+    /// <summary>Resolves a self/cross endpoint reference to the target platform address. Implemented by providers.</summary>
+    /// <param name="endpoint">The endpoint reference to resolve.</param>
+    protected abstract Output<string> ResolveEndpoint(EndpointReference endpoint);
+
+    /// <summary>Resolves a single endpoint property to the target platform value. Implemented by providers.</summary>
+    /// <param name="expression">The endpoint property expression to resolve.</param>
+    protected abstract Output<string> ResolveEndpointExpression(EndpointReferenceExpression expression);
+
+    /// <summary>Processes endpoints from the resource. Providers override to build their endpoint mappings.</summary>
+    protected virtual void ProcessEndpoints()
     {
-        // Environment variables are collected via EnvironmentCallbackAnnotation
+    }
+
+    /// <summary>
+    /// Resolves an Aspire structured value to a Pulumi <see cref="Output{T}"/>, tracking whether the value is
+    /// secret. Mirrors the value handling performed by Aspire's Azure Container Apps translator.
+    /// </summary>
+    /// <param name="value">The value object from an environment variable, argument, or reference expression.</param>
+    protected async Task<PulumiResolvedValue> ResolveValueAsync(object? value)
+    {
+        switch (value)
+        {
+            case null:
+                return new(Output.Create(string.Empty), IsSecret: false);
+
+            case string s:
+                return new(Output.Create(s), IsSecret: false);
+
+            case ParameterResource parameter:
+            {
+                var resolved = await parameter.GetValueAsync(CancellationToken).ConfigureAwait(false) ?? string.Empty;
+                // Secret parameters are wrapped so Pulumi encrypts them in state rather than storing plaintext.
+                return parameter.Secret
+                    ? new(Output.CreateSecret(resolved), IsSecret: true)
+                    : new(Output.Create(resolved), IsSecret: false);
+            }
+
+            case EndpointReference endpoint:
+                return new(ResolveEndpoint(endpoint), IsSecret: false);
+
+            case EndpointReferenceExpression endpointExpression:
+                return new(ResolveEndpointExpression(endpointExpression), IsSecret: false);
+
+            case ConnectionStringReference connectionString:
+            {
+                // Connection strings frequently embed credentials; treat them as secret.
+                var resolved = await ((IValueProvider)connectionString).GetValueAsync(CancellationToken).ConfigureAwait(false) ?? string.Empty;
+                return new(Output.CreateSecret(resolved), IsSecret: true);
+            }
+
+            case IResourceWithConnectionString resourceWithConnectionString:
+            {
+                var resolved = await resourceWithConnectionString.GetValueAsync(CancellationToken).ConfigureAwait(false) ?? string.Empty;
+                return new(Output.CreateSecret(resolved), IsSecret: true);
+            }
+
+            case PulumiOutputReference outputReference:
+            {
+                // The reference resolves to its deferred string value, which the environment populates from the
+                // deployed stack outputs. Output references are not secret-bearing on their own.
+                var resolved = await outputReference.GetValueAsync(CancellationToken).ConfigureAwait(false) ?? string.Empty;
+                return new(Output.Create(resolved), IsSecret: false);
+            }
+
+            case ReferenceExpression referenceExpression:
+                return await ResolveReferenceExpressionAsync(referenceExpression).ConfigureAwait(false);
+
+            case IValueProvider valueProvider:
+            {
+                var resolved = await valueProvider.GetValueAsync(
+                    new ValueProviderContext { ExecutionContext = ExecutionContext },
+                    CancellationToken).ConfigureAwait(false) ?? string.Empty;
+                return new(Output.Create(resolved), IsSecret: false);
+            }
+
+            case IManifestExpressionProvider manifestExpression:
+                // No resolver available for a bare manifest expression here; surface its expression text.
+                return new(Output.Create(manifestExpression.ValueExpression), IsSecret: false);
+
+            default:
+                return new(Output.Create(value.ToString() ?? string.Empty), IsSecret: false);
+        }
+    }
+
+    private async Task<PulumiResolvedValue> ResolveReferenceExpressionAsync(ReferenceExpression expression)
+    {
+        // Simple single-provider passthrough keeps the underlying value's secret-ness and Output identity.
+        if (expression.Format == "{0}" && expression.ValueProviders.Count == 1)
+        {
+            return await ResolveValueAsync(expression.ValueProviders[0]).ConfigureAwait(false);
+        }
+
+        var parts = new Output<string>[expression.ValueProviders.Count];
+        var anySecret = false;
+
+        for (var i = 0; i < expression.ValueProviders.Count; i++)
+        {
+            var resolved = await ResolveValueAsync(expression.ValueProviders[i]).ConfigureAwait(false);
+            parts[i] = resolved.Value;
+            anySecret |= resolved.IsSecret;
+        }
+
+        var combined = Output.All(parts).Apply(values =>
+            string.Format(CultureInfo.InvariantCulture, expression.Format, [.. values.Cast<object>()]));
+
+        // If any constituent value was secret, the whole composite is secret.
+        return anySecret
+            ? new(Output.CreateSecret(combined), IsSecret: true)
+            : new(combined, IsSecret: false);
+    }
+
+    /// <summary>Collects environment variables by invoking the resource's environment callbacks.</summary>
+    protected virtual async Task ProcessEnvironmentVariablesAsync()
+    {
         if (!ComputeResource.TryGetAnnotationsOfType<EnvironmentCallbackAnnotation>(out var annotations))
         {
             return;
@@ -141,195 +212,68 @@ public abstract class PulumiComputeResourceContext
             ExecutionContext,
             ComputeResource,
             EnvironmentVariables,
-            cancellationToken: cancellationToken);
+            cancellationToken: CancellationToken);
 
-        foreach (var callback in annotations)
+        foreach (var annotation in annotations)
         {
-            await callback.Callback(context).ConfigureAwait(false);
+            await annotation.Callback(context).ConfigureAwait(false);
         }
-
-        Logger.LogDebug(
-            "Collected {Count} environment variables for '{Name}'",
-            EnvironmentVariables.Count,
-            ComputeResource.Name);
     }
 
-    /// <summary>
-    /// Processes command-line arguments from the compute resource.
-    /// Stores raw values in <see cref="Args"/> for later resolution.
-    /// </summary>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    protected virtual async Task ProcessArgumentsAsync(CancellationToken cancellationToken = default)
+    /// <summary>Collects command-line arguments by invoking the resource's argument callbacks.</summary>
+    protected virtual async Task ProcessArgumentsAsync()
     {
-        // Arguments are collected via CommandLineArgsCallbackAnnotation
         if (!ComputeResource.TryGetAnnotationsOfType<CommandLineArgsCallbackAnnotation>(out var annotations))
         {
             return;
         }
 
-        var context = new CommandLineArgsCallbackContext(Args, ComputeResource, cancellationToken: cancellationToken)
+        var context = new CommandLineArgsCallbackContext(Args, ComputeResource, cancellationToken: CancellationToken)
         {
             ExecutionContext = ExecutionContext,
         };
 
-        foreach (var callback in annotations)
+        foreach (var annotation in annotations)
         {
-            await callback.Callback(context).ConfigureAwait(false);
-        }
-
-        Logger.LogDebug(
-            "Collected {Count} command-line arguments for '{Name}'",
-            Args.Count,
-            ComputeResource.Name);
-    }
-
-    /// <summary>
-    /// Processes endpoints from the compute resource using EndpointAnnotation.
-    /// This method uses annotations directly rather than allocated endpoints,
-    /// which are not available in publish mode.
-    /// </summary>
-    protected virtual void ProcessEndpoints()
-    {
-        // Use TryGetEndpoints which returns EndpointAnnotation objects
-        // This works in publish mode without requiring allocated endpoints
-        if (!ComputeResource.TryGetEndpoints(out var endpoints))
-        {
-            return;
-        }
-
-        foreach (var endpoint in endpoints)
-        {
-            // Get ports from the annotation (not allocated endpoint)
-            var targetPort = endpoint.TargetPort ?? endpoint.Port ?? 8080;
-            var exposedPort = endpoint.Port ?? targetPort;
-
-            var info = new EndpointInfo(
-                endpoint.Name,
-                endpoint.UriScheme,
-                exposedPort,
-                targetPort,
-                endpoint.IsExternal);
-
-            _endpoints.Add(info);
-
-            Logger.LogDebug(
-                "Found endpoint '{EndpointName}' ({Scheme}:{Port}) for '{Name}'",
-                endpoint.Name,
-                endpoint.UriScheme,
-                exposedPort,
-                ComputeResource.Name);
+            await annotation.Callback(context).ConfigureAwait(false);
         }
     }
 
-    /// <summary>
-    /// Applies customization annotations to the created resource.
-    /// </summary>
+    /// <summary>Applies <see cref="PulumiCustomizationAnnotation"/> callbacks to the created Pulumi resource.</summary>
     /// <param name="resource">The created Pulumi resource.</param>
-    protected virtual Task ApplyCustomizationsAsync(PulumiResource resource)
+    protected void ApplyCustomizations(PulumiResource resource)
     {
-        // Check for generic customization annotations
         if (ComputeResource.TryGetAnnotationsOfType<PulumiCustomizationAnnotation>(out var annotations))
         {
             foreach (var annotation in annotations)
             {
                 annotation.Configure(resource, PublishingContext);
-                Logger.LogDebug(
-                    "Applied customization annotation to '{Name}'",
-                    ComputeResource.Name);
             }
         }
-
-        return Task.CompletedTask;
     }
 
     /// <summary>
-    /// Normalizes a resource name for use in cloud providers.
+    /// Gets the fully qualified container image that was pushed to the registry for this resource, accounting
+    /// for generated Dockerfiles (e.g. static-file publishing). Returns <see langword="null"/> when unavailable.
     /// </summary>
-    /// <param name="name">The original name.</param>
-    /// <returns>A normalized name (lowercase, alphanumeric with hyphens).</returns>
-    protected static string NormalizeName(string name)
+    protected async Task<string?> GetPushedContainerImageAsync()
     {
-        return name.ToLowerInvariant().Replace("_", "-");
+        IValueProvider imageReference = new ContainerImageReference(ComputeResource);
+        return await imageReference.GetValueAsync(
+            new ValueProviderContext { ExecutionContext = ExecutionContext },
+            CancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>
-    /// Gets the container image for this compute resource.
-    /// </summary>
-    /// <returns>The container image string, or null if not available.</returns>
-    protected virtual string? GetContainerImage()
-    {
-        if (!ComputeResource.TryGetAnnotationsOfType<ContainerImageAnnotation>(out var annotations))
-        {
-            return null;
-        }
+    /// <summary>Gets the replica count for the resource, defaulting to 1.</summary>
+    protected int GetReplicaCount() => ComputeResource.GetReplicaCount();
 
-        var imageAnnotation = annotations.FirstOrDefault();
-        if (imageAnnotation is null)
-        {
-            return null;
-        }
+    /// <summary>Gets the container entrypoint if the resource is a container with a custom entrypoint.</summary>
+    protected string? GetContainerEntrypoint() =>
+        ComputeResource is ContainerResource container ? container.Entrypoint : null;
 
-        var registry = imageAnnotation.Registry;
-        var image = imageAnnotation.Image;
-        var tag = imageAnnotation.Tag ?? "latest";
-
-        return string.IsNullOrEmpty(registry)
-            ? $"{image}:{tag}"
-            : $"{registry}/{image}:{tag}";
-    }
-
-    /// <summary>
-    /// Gets the pushed container image for this compute resource asynchronously.
-    /// This returns the fully qualified image name that was pushed to the container registry,
-    /// which may differ from the original image annotation (e.g., after PublishWithStaticFiles
-    /// creates a custom Dockerfile).
-    /// </summary>
-    /// <param name="cancellationToken">A cancellation token.</param>
-    /// <returns>The pushed container image string, or null if not available.</returns>
-    protected virtual async Task<string?> GetPushedContainerImageAsync(CancellationToken cancellationToken = default)
-    {
-        // Use ContainerImageReference to get the fully qualified pushed image name
-        // This handles the case where a custom Dockerfile is generated (e.g., PublishWithStaticFiles)
-        // and the image is pushed to the container registry with a different name than the original annotation
-        IValueProvider cir = new ContainerImageReference(ComputeResource);
-        var valueProviderContext = new ValueProviderContext
-        {
-            ExecutionContext = ExecutionContext
-        };
-
-        var pushedImage = await cir.GetValueAsync(valueProviderContext, cancellationToken).ConfigureAwait(false);
-
-        Logger.LogDebug(
-            "Resolved pushed container image for '{Name}': {Image}",
-            ComputeResource.Name,
-            pushedImage ?? "(null)");
-
-        return pushedImage;
-    }
-
-    /// <summary>
-    /// Gets the replica count for the resource.
-    /// </summary>
-    /// <returns>The replica count, defaulting to 1 if not specified.</returns>
-    protected int GetReplicaCount()
-    {
-        return ComputeResource.GetReplicaCount();
-    }
-
-    /// <summary>
-    /// Gets the container entrypoint if the resource is a container with a custom entrypoint.
-    /// </summary>
-    /// <returns>The entrypoint command, or <see langword="null"/> if not applicable.</returns>
-    protected string? GetContainerEntrypoint()
-    {
-        return ComputeResource is ContainerResource container ? container.Entrypoint : null;
-    }
-
-    /// <summary>
-    /// Validates that endpoints use supported schemes.
-    /// </summary>
+    /// <summary>Validates that the given endpoints only use supported URI schemes.</summary>
     /// <param name="endpoints">The endpoints to validate.</param>
-    /// <param name="supportedSchemes">The supported URI schemes (e.g., "http", "https", "tcp").</param>
+    /// <param name="supportedSchemes">The supported URI schemes.</param>
     /// <exception cref="NotSupportedException">Thrown when an endpoint uses an unsupported scheme.</exception>
     protected static void ValidateEndpointSchemes(
         IEnumerable<EndpointAnnotation> endpoints,
@@ -343,23 +287,17 @@ public abstract class PulumiComputeResourceContext
         if (unsupported.Count > 0)
         {
             throw new NotSupportedException(
-                $"The endpoint(s) {string.Join(", ", unsupported.Select(n => $"'{n}'"))} " +
-                $"specify an unsupported scheme. The supported schemes are: {string.Join(", ", supportedSchemes.Select(s => $"'{s}'"))}.");
+                $"The endpoint(s) {string.Join(", ", unsupported.Select(n => $"'{n}'"))} specify an unsupported scheme. " +
+                $"The supported schemes are: {string.Join(", ", supportedSchemes.Select(s => $"'{s}'"))}.");
         }
     }
+
+    /// <summary>Normalizes a resource name for use in cloud providers (lowercase, hyphenated).</summary>
+    /// <param name="name">The original name.</param>
+    protected static string NormalizeName(string name) => name.ToLowerInvariant().Replace("_", "-");
 }
 
-/// <summary>
-/// Information about an endpoint on a compute resource.
-/// </summary>
-/// <param name="Name">The endpoint name.</param>
-/// <param name="Scheme">The endpoint scheme (http, https, tcp, etc.).</param>
-/// <param name="Port">The exposed port.</param>
-/// <param name="TargetPort">The target port on the container.</param>
-/// <param name="IsExternal">Whether the endpoint is externally accessible.</param>
-public sealed record EndpointInfo(
-    string Name,
-    string Scheme,
-    int? Port,
-    int? TargetPort,
-    bool IsExternal);
+/// <summary>A resolved Pulumi value plus whether it should be treated as a secret.</summary>
+/// <param name="Value">The resolved Pulumi output.</param>
+/// <param name="IsSecret">Whether the value contains secret material.</param>
+public readonly record struct PulumiResolvedValue(Output<string> Value, bool IsSecret);

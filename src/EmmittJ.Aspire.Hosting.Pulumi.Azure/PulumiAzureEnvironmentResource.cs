@@ -1,18 +1,15 @@
 // Licensed under the Apache License, Version 2.0.
 
 #pragma warning disable ASPIREPIPELINES001 // Pipeline APIs are experimental
-#pragma warning disable ASPIRECOMPUTE003 // IContainerRegistry is experimental
+#pragma warning disable ASPIRECOMPUTE002  // IComputeEnvironmentResource is experimental
+#pragma warning disable ASPIRECOMPUTE003  // IContainerRegistry is experimental
 
-using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Pipelines;
 using EmmittJ.Aspire.Hosting.Pulumi;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Pulumi;
 using Pulumi.Automation;
 using Pulumi.AzureNative.App;
-using Pulumi.AzureNative.App.Inputs;
 using Pulumi.AzureNative.Authorization;
 using Pulumi.AzureNative.ManagedIdentity;
 using Pulumi.AzureNative.Resources;
@@ -20,322 +17,163 @@ using Pulumi.AzureNative.Resources;
 namespace EmmittJ.Aspire.Hosting.Pulumi.Azure;
 
 /// <summary>
-/// Azure compute environment resource that deploys Aspire applications
-/// to Azure Container Apps using Pulumi.
+/// A Pulumi-managed compute environment that deploys Aspire compute resources to Azure Container Apps.
 /// </summary>
 /// <remarks>
-/// <para>
-/// This resource extends <see cref="PulumiCloudEnvironmentResource"/> and uses a separate
-/// <see cref="PulumiAzureContainerRegistryResource"/> for container registry management.
-/// The registry is deployed first, then images are built and pushed, and finally
-/// the Container Apps are deployed.
-/// </para>
-/// <para>
-/// The two-stage deployment pattern:
-/// </para>
-/// <list type="number">
-/// <item>Stage 1: Container Registry (separate Pulumi stack)</item>
-/// <item>Docker login to ACR</item>
-/// <item>Build and push images</item>
-/// <item>Stage 2: Container Apps Environment (main Pulumi stack)</item>
-/// </list>
+/// Container images are pushed to a dedicated <see cref="PulumiAzureContainerRegistryResource"/> stack first,
+/// then the environment's Pulumi program provisions a resource group, user-assigned managed identity (granted
+/// AcrPull), a Container Apps managed environment, and a Container App per compute resource.
 /// </remarks>
-public class PulumiAzureEnvironmentResource : PulumiCloudEnvironmentResource
+public sealed class PulumiAzureEnvironmentResource : PulumiEnvironmentResource
 {
+    // Built-in "AcrPull" role definition id.
+    private const string AcrPullRoleDefinitionId = "/providers/Microsoft.Authorization/roleDefinitions/7f951dda-4ed3-4680-a7ca-43fe172d538d";
+
     private readonly PulumiAzureContainerRegistryResource _registry;
     private ResourceGroup? _resourceGroup;
     private ManagedEnvironment? _managedEnvironment;
     private UserAssignedIdentity? _managedIdentity;
 
     /// <summary>
-    /// ACR Pull role definition ID (built-in Azure role).
-    /// </summary>
-    private const string AcrPullRoleDefinitionId = "/providers/Microsoft.Authorization/roleDefinitions/7f951dda-4ed3-4680-a7ca-43fe172d538d";
-
-    /// <summary>
     /// Initializes a new instance of the <see cref="PulumiAzureEnvironmentResource"/> class.
     /// </summary>
-    /// <param name="name">The name of the environment (used as both project name and environment name).</param>
-    public PulumiAzureEnvironmentResource(string name)
-        : this(name, projectName: name)
+    /// <param name="name">The environment resource name.</param>
+    /// <param name="projectName">The Pulumi project name. Defaults to <paramref name="name"/>.</param>
+    public PulumiAzureEnvironmentResource(string name, string? projectName = null)
+        : base(name, projectName)
     {
+        _registry = new PulumiAzureContainerRegistryResource(
+            $"{name}-registry",
+            pulumiProjectName: PulumiProjectName,
+            stackName: $"{StackName}-registry",
+            location: "eastus");
     }
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="PulumiAzureEnvironmentResource"/> class
-    /// with a custom project name.
-    /// </summary>
-    /// <param name="name">The name of the environment.</param>
-    /// <param name="projectName">The Pulumi project name for grouping stacks.</param>
-    public PulumiAzureEnvironmentResource(string name, string projectName)
-        : this(
-            name,
-            CreateRegistry(name, projectName),
-            projectName)
-    {
-    }
-
-    /// <summary>
-    /// Creates the container registry with proper naming derived from project and environment.
-    /// </summary>
-    private static PulumiAzureContainerRegistryResource CreateRegistry(string envName, string projectName)
-    {
-        return new PulumiAzureContainerRegistryResource(
-            $"{envName}-registry",
-            environmentName: envName,
-            projectName: projectName);
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="PulumiAzureEnvironmentResource"/> class
-    /// with a custom container registry.
-    /// </summary>
-    /// <param name="name">The name of the environment.</param>
-    /// <param name="registry">The Azure container registry resource to use.</param>
-    /// <param name="projectName">The Pulumi project name. If null, uses <paramref name="name"/>.</param>
-    public PulumiAzureEnvironmentResource(
-        string name,
-        PulumiAzureContainerRegistryResource registry,
-        string? projectName = null)
-        : base(name, registry, projectName)
-    {
-        _registry = registry;
-    }
-
-    /// <summary>
-    /// Gets or sets the Azure region for deployment.
-    /// </summary>
+    /// <summary>Gets or sets the Azure region for the environment and its registry.</summary>
     public string Location
     {
         get => _registry.Location;
         set => _registry.Location = value;
     }
 
-    /// <summary>
-    /// Gets or sets the resource group name for the environment.
-    /// If not set, a resource group will be created.
-    /// </summary>
+    /// <summary>Gets or sets an existing resource group name. When unset, one is created.</summary>
     public string? ResourceGroupName { get; set; }
 
-    /// <summary>
-    /// Gets or sets the Container Apps Environment name.
-    /// If not set, one will be created.
-    /// </summary>
+    /// <summary>Gets or sets an existing Container Apps managed environment name. When unset, one is created.</summary>
     public string? ManagedEnvironmentName { get; set; }
 
-    /// <summary>
-    /// Gets the Azure container registry resource.
-    /// </summary>
-    public new PulumiAzureContainerRegistryResource ContainerRegistry => _registry;
+    /// <summary>Gets the Azure container registry that backs this environment.</summary>
+    public PulumiAzureContainerRegistryResource Registry => _registry;
 
-    /// <summary>
-    /// Gets the created Pulumi resource group.
-    /// Available after translation.
-    /// </summary>
+    /// <inheritdoc />
+    public override IContainerRegistry ContainerRegistry => _registry;
+
     internal ResourceGroup? ResourceGroup => _resourceGroup;
-
-    /// <summary>
-    /// Gets the created Pulumi managed environment.
-    /// Available after translation.
-    /// </summary>
     internal ManagedEnvironment? ManagedEnvironment => _managedEnvironment;
-
-    /// <summary>
-    /// Gets the created Pulumi managed identity.
-    /// Available after translation.
-    /// </summary>
     internal UserAssignedIdentity? ManagedIdentity => _managedIdentity;
 
     /// <inheritdoc />
     public override ReferenceExpression GetHostAddressExpression(EndpointReference endpointReference)
     {
+        // Placeholder host. The real default domain is resolved by Azure and exposed via the app FQDN output;
+        // surfacing it here is deferred to a follow-up so cross-resource URLs use the app's own FQDN output.
         var resource = endpointReference.Resource;
-        // Azure Container Apps format: https://{app-name}.{default-domain}
-        // The actual domain is set by Azure, but we can reference it via the app's FQDN
         return ReferenceExpression.Create($"{resource.Name.ToLowerInvariant()}.azurecontainerapps.io");
     }
 
     /// <inheritdoc />
-    protected override async Task AddEnvironmentStepsAsync(
-        PipelineStepFactoryContext factoryContext,
-        List<PipelineStep> steps)
+    protected override async Task ConfigureStackAsync(WorkspaceStack stack, PipelineStepContext context)
     {
-        // Main deploy step for Container Apps - uses base class DeployAsync
-        var deployStep = new PipelineStep
-        {
-            Name = PulumiWellKnownPipelineSteps.Deploy(Name),
-            Description = $"Deploys Container Apps to {Name} using Pulumi.",
-            Action = DeployAsync,
-            Resource = this,
-            Tags = [PulumiWellKnownPipelineSteps.PulumiTag]
-        };
-        deployStep.RequiredBy(WellKnownPipelineSteps.Deploy);
-        // Deploy depends on Push (not Build) - this ensures images are pushed to registry first
-        // The registry step is RequiredBy(PushPrereq), so the dependency chain is:
-        // pulumi-deploy-registry -> PushPrereq -> push-* -> Push -> pulumi-deploy-env
-        deployStep.DependsOn(WellKnownPipelineSteps.Push);
-        steps.Add(deployStep);
-
-        // Print summary step
-        var printSummaryStep = new PipelineStep
-        {
-            Name = PulumiWellKnownPipelineSteps.PrintSummary(Name),
-            Description = $"Prints deployment summary for {Name}.",
-            Action = PrintSummaryAsync,
-            Resource = this,
-            Tags = [PulumiWellKnownPipelineSteps.PrintSummaryTag],
-            DependsOnSteps = [PulumiWellKnownPipelineSteps.Deploy(Name)],
-            RequiredBySteps = [WellKnownPipelineSteps.Deploy]
-        };
-        steps.Add(printSummaryStep);
-
-        await Task.CompletedTask;
+        await stack.SetConfigAsync("azure-native:location", new ConfigValue(Location), context.CancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
-    protected override async Task ConfigureStackAsync(
-        WorkspaceStack stack,
-        PipelineStepContext context,
-        ILogger logger)
+    public override async Task CreateStackResourcesAsync(PulumiPublishingContext context)
     {
-        // Configure Azure provider with location
-        await stack.SetConfigAsync("azure-native:location", new ConfigValue(Location), context.CancellationToken);
+        var resourceGroup = GetOrCreateResourceGroup();
+        var managedIdentity = GetOrCreateManagedIdentity(resourceGroup);
+        var managedEnvironment = GetOrCreateManagedEnvironment(resourceGroup);
 
-        logger.LogDebug("Configured Azure stack with location '{Location}'", Location);
-    }
+        CreateAcrPullRoleAssignment(managedIdentity);
 
-    /// <summary>
-    /// Creates the Azure Container Apps resources within the Pulumi program.
-    /// </summary>
-    public override async Task CreateResourcesAsync(PulumiPublishingContext context)
-    {
-        context.Logger.LogInformation(
-            "Creating Azure Container Apps for environment '{Name}' in location '{Location}'",
-            Name, Location);
-
-        // Create shared infrastructure
-        var resourceGroup = GetOrCreateResourceGroup(context);
-        var managedIdentity = GetOrCreateManagedIdentity(context, resourceGroup);
-        var managedEnvironment = GetOrCreateManagedEnvironment(context, resourceGroup);
-
-        // Create role assignment for ACR Pull (if registry is available)
-        CreateAcrPullRoleAssignment(context, managedIdentity);
-
-        // Process each compute resource
-        foreach (var resource in context.Model.GetComputeResources())
+        foreach (var compute in context.GetTargetedComputeResources())
         {
-            if (resource is not IComputeResource computeResource)
-            {
-                continue;
-            }
-
-            // Skip if marked to skip
-            if (computeResource.TryGetAnnotationsOfType<SkipPulumiTranslationAnnotation>(out _))
-            {
-                context.Logger.LogDebug(
-                    "Skipping resource '{Name}' (marked with SkipPulumiTranslationAnnotation)",
-                    computeResource.Name);
-                continue;
-            }
-
-            await CreateContainerAppAsync(context, computeResource);
+            var computeContext = new PulumiAzureComputeResourceContext(compute, context, this);
+            await computeContext.ProcessResourceAsync().ConfigureAwait(false);
         }
 
-        // Add outputs
         context.AddOutput("resourceGroupName", resourceGroup.Name);
         context.AddOutput("managedEnvironmentName", managedEnvironment.Name);
-
-        // Add registry information from the already-deployed registry
-        if (_registry.ResolvedName is not null)
-        {
-            context.AddOutput("containerRegistryName", _registry.ResolvedName);
-        }
-        if (_registry.ResolvedEndpoint is not null)
-        {
-            context.AddOutput("containerRegistryLoginServer", _registry.ResolvedEndpoint);
-        }
-
-        context.Logger.LogInformation(
-            "Created Azure Container Apps for environment '{Name}'",
-            Name);
     }
 
-    /// <summary>
-    /// Gets or creates the Azure resource group for the Container Apps environment.
-    /// </summary>
-    /// <remarks>
-    /// This resource group is separate from the registry's resource group.
-    /// Registry uses <c>{ResourcePrefix}-registry-rg</c>, environment uses <c>{ResourcePrefix}-rg</c>.
-    /// </remarks>
-    private ResourceGroup GetOrCreateResourceGroup(PulumiPublishingContext context)
+    private ResourceGroup GetOrCreateResourceGroup()
     {
         if (_resourceGroup is not null)
         {
             return _resourceGroup;
         }
 
-        var resourceGroupName = ResourceGroupName ?? $"{ResourcePrefix}-rg";
-
+        var resourceGroupName = ResourceGroupName ?? $"{StackName}-rg";
         _resourceGroup = new ResourceGroup(resourceGroupName, new ResourceGroupArgs
         {
             ResourceGroupName = resourceGroupName,
             Location = Location,
         });
 
-        context.Logger.LogDebug("Creating resource group '{Name}'", resourceGroupName);
         return _resourceGroup;
     }
 
-    /// <summary>
-    /// Gets or creates the user-assigned managed identity for Container Apps.
-    /// This identity is used for authenticating to ACR.
-    /// </summary>
-    private UserAssignedIdentity GetOrCreateManagedIdentity(
-        PulumiPublishingContext context,
-        ResourceGroup resourceGroup)
+    private UserAssignedIdentity GetOrCreateManagedIdentity(ResourceGroup resourceGroup)
     {
         if (_managedIdentity is not null)
         {
             return _managedIdentity;
         }
 
-        var identityName = $"{ResourcePrefix}-identity";
-
+        var identityName = $"{StackName}-identity";
         _managedIdentity = new UserAssignedIdentity(identityName, new UserAssignedIdentityArgs
         {
             ResourceName = identityName,
             ResourceGroupName = resourceGroup.Name,
-            Location = Location
+            Location = Location,
         });
 
-        context.Logger.LogDebug("Created managed identity '{Name}'", identityName);
         return _managedIdentity;
     }
 
-    /// <summary>
-    /// Creates a role assignment granting the managed identity ACR Pull permissions.
-    /// </summary>
-    private void CreateAcrPullRoleAssignment(
-        PulumiPublishingContext context,
-        UserAssignedIdentity managedIdentity)
+    private ManagedEnvironment GetOrCreateManagedEnvironment(ResourceGroup resourceGroup)
     {
-        // Only create if we have a registry with resolved values
+        if (_managedEnvironment is not null)
+        {
+            return _managedEnvironment;
+        }
+
+        var envName = ManagedEnvironmentName ?? $"{StackName}-env";
+        _managedEnvironment = new ManagedEnvironment(envName, new ManagedEnvironmentArgs
+        {
+            EnvironmentName = envName,
+            ResourceGroupName = resourceGroup.Name,
+            Location = Location,
+        });
+
+        return _managedEnvironment;
+    }
+
+    private void CreateAcrPullRoleAssignment(UserAssignedIdentity managedIdentity)
+    {
         if (_registry.ResolvedName is null || _registry.ResolvedResourceGroupName is null)
         {
-            context.Logger.LogWarning(
-                "Cannot create ACR Pull role assignment: registry name or resource group not resolved");
+            // Registry not yet resolved (provision step did not run). The role assignment is skipped; the
+            // managed identity still exists but won't have AcrPull until the registry is provisioned.
             return;
         }
 
-        // The scope is the ACR resource ID
-        // Format: /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ContainerRegistry/registries/{name}
-        // Use the resolved resource group name from the registry stack
         var registryResourceGroup = _registry.ResolvedResourceGroupName;
 
-        // Get subscription ID from Azure provider context (using the identity's ID to extract it)
+        // Extract the subscription id from the identity's ARM id:
+        //   /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{name}
         var subscriptionId = managedIdentity.Id.Apply(id =>
         {
-            // ID format: /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{name}
             var parts = id.Split('/');
             return parts.Length > 2 ? parts[2] : string.Empty;
         });
@@ -343,65 +181,12 @@ public class PulumiAzureEnvironmentResource : PulumiCloudEnvironmentResource
         var scope = subscriptionId.Apply(sub =>
             $"/subscriptions/{sub}/resourceGroups/{registryResourceGroup}/providers/Microsoft.ContainerRegistry/registries/{_registry.ResolvedName}");
 
-        var roleAssignment = new RoleAssignment($"{ResourcePrefix}-acr-pull", new RoleAssignmentArgs
+        _ = new RoleAssignment($"{StackName}-acr-pull", new RoleAssignmentArgs
         {
             PrincipalId = managedIdentity.PrincipalId,
             PrincipalType = "ServicePrincipal",
-            RoleDefinitionId = subscriptionId.Apply(sub =>
-                $"/subscriptions/{sub}{AcrPullRoleDefinitionId}"),
-            Scope = scope
+            RoleDefinitionId = subscriptionId.Apply(sub => $"/subscriptions/{sub}{AcrPullRoleDefinitionId}"),
+            Scope = scope,
         });
-
-        context.Logger.LogDebug("Created ACR Pull role assignment for identity");
-    }
-
-    /// <summary>
-    /// Gets or creates the Azure Container Apps managed environment.
-    /// </summary>
-    private ManagedEnvironment GetOrCreateManagedEnvironment(
-        PulumiPublishingContext context,
-        ResourceGroup resourceGroup)
-    {
-        if (_managedEnvironment is not null)
-        {
-            return _managedEnvironment;
-        }
-
-        var envName = ManagedEnvironmentName ?? $"{ResourcePrefix}-env";
-
-        _managedEnvironment = new ManagedEnvironment(envName, new ManagedEnvironmentArgs
-        {
-            EnvironmentName = envName,
-            ResourceGroupName = resourceGroup.Name,
-            Location = Location
-        });
-
-        context.Logger.LogDebug("Created managed environment '{Name}'", envName);
-        return _managedEnvironment;
-    }
-
-    /// <summary>
-    /// Creates a Container App for the compute resource using the context-based pattern.
-    /// </summary>
-    private async Task CreateContainerAppAsync(
-        PulumiPublishingContext context,
-        IComputeResource computeResource)
-    {
-        context.Logger.LogDebug("Creating Container App for '{Name}'", computeResource.Name);
-
-        // Create the Azure compute resource context which will process env vars, args, endpoints
-        // and build the ContainerApp resource
-        var computeContext = new PulumiAzureComputeResourceContext(
-            computeResource,
-            context,
-            this);
-
-        // Process the resource and build the ContainerApp
-        // This collects env vars, args, endpoints and creates the Pulumi resource
-        await computeContext.ProcessResourceAsync(context.PipelineContext.CancellationToken);
-
-        context.Logger.LogInformation(
-            "Created Container App for resource '{ResourceName}'",
-            computeResource.Name);
     }
 }

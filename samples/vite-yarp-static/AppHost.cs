@@ -1,8 +1,5 @@
 // Vite + YARP static sample with Pulumi Azure deployment
 
-using EmmittJ.Aspire.Hosting.Pulumi;
-using EmmittJ.Aspire.Hosting.Pulumi.Azure;
-
 var builder = DistributedApplication.CreateBuilder(args);
 
 // Add Pulumi Azure environment for cloud deployment

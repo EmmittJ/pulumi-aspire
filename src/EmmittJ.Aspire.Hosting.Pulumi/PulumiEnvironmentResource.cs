@@ -1,506 +1,378 @@
 // Licensed under the Apache License, Version 2.0.
 
-#pragma warning disable ASPIREPIPELINES001
+#pragma warning disable ASPIREPIPELINES001 // Pipeline APIs are experimental
+#pragma warning disable ASPIREPIPELINES004 // IPipelineOutputService is experimental
+#pragma warning disable ASPIRECOMPUTE001  // Compute resource APIs are experimental
+#pragma warning disable ASPIRECOMPUTE002  // IComputeEnvironmentResource is experimental
+#pragma warning disable ASPIRECOMPUTE003  // IContainerRegistry is experimental
 
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Pipelines;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Pulumi.Automation;
-using Pulumi.Automation.Events;
 
 namespace EmmittJ.Aspire.Hosting.Pulumi;
 
 /// <summary>
-/// Base class for Pulumi-managed compute environment resources.
-/// Provides common functionality for deploying Aspire applications with Pulumi using the Automation API.
+/// Base class for a Pulumi-managed compute environment. Deploys the compute resources targeted to it by running
+/// a single inline Pulumi program through the Automation API.
 /// </summary>
 /// <remarks>
 /// <para>
-/// This base class handles all Automation API orchestration including stack creation,
-/// deployment, preview, and destroy operations. Provider packages only need to implement
-/// <see cref="CreateResourcesAsync"/> to create provider-specific cloud resources.
+/// This resource follows the same model as Aspire's built-in compute environments (Azure Container Apps,
+/// Kubernetes, Docker Compose):
 /// </para>
+/// <list type="bullet">
+/// <item>A <c>prepare</c> pipeline step (required by <c>before-start</c>) materializes a
+/// <see cref="PulumiDeploymentTargetResource"/> for each targeted compute resource and attaches a
+/// <see cref="DeploymentTargetAnnotation"/>.</item>
+/// <item>A <c>publish</c> step writes a reviewable <c>pulumi preview</c> artifact.</item>
+/// <item>A <c>deploy</c> step (required by <c>deploy</c>, after <c>push</c>) runs <c>pulumi up</c>.</item>
+/// <item>A <c>destroy</c> step (required by <c>destroy</c>) runs <c>pulumi destroy</c>.</item>
+/// </list>
 /// <para>
-/// The resource name is used as the Pulumi stack name.
+/// The environment must only be added to the application model in publish mode. Use the run/publish split
+/// helper in the integration's <c>Add*</c> extension so it never surfaces as a local dashboard resource.
 /// </para>
 /// </remarks>
-public abstract class PulumiEnvironmentResource : Resource, IPulumiEnvironmentResource
+public abstract class PulumiEnvironmentResource : Resource, IComputeEnvironmentResource
 {
-    private WorkspaceStack? _stack;
-    private IDictionary<string, OutputValue>? _lastOutputs;
+    private IReadOnlyDictionary<string, string?> _lastOutputs = new Dictionary<string, string?>();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PulumiEnvironmentResource"/> class.
     /// </summary>
-    /// <param name="name">The name of the resource (and Pulumi stack).</param>
-    protected PulumiEnvironmentResource(string name) : base(name)
+    /// <param name="name">The environment resource name. Used as the default Pulumi stack name.</param>
+    /// <param name="projectName">The Pulumi project name that groups stacks. Defaults to <paramref name="name"/>.</param>
+    protected PulumiEnvironmentResource(string name, string? projectName = null)
+        : base(name)
     {
-        // Default naming: use resource name for both project and environment
-        PulumiProjectName = name;
-        EnvironmentName = name;
+        PulumiProjectName = projectName ?? name;
+        StackName = name;
 
-        // Register pipeline steps via annotation
         Annotations.Add(new PipelineStepAnnotation(CreatePipelineStepsAsync));
+        Annotations.Add(new PipelineConfigurationAnnotation(ConfigurePipeline));
     }
 
-    /// <summary>
-    /// Gets or sets the Pulumi project name.
-    /// All stacks are grouped under this project in the Pulumi console.
-    /// </summary>
+    /// <summary>Gets or sets the Pulumi project name that groups stacks in the Pulumi console.</summary>
     public string PulumiProjectName { get; set; }
 
-    /// <summary>
-    /// Gets or sets the environment name used in stack naming.
-    /// </summary>
-    public string EnvironmentName { get; set; }
+    /// <summary>Gets or sets the Pulumi stack name.</summary>
+    public string StackName { get; set; }
+
+    /// <summary>Gets or sets the working directory for Pulumi operations. When unset, a per-project temp directory is used.</summary>
+    public string? WorkingDirectory { get; set; }
+
+    /// <summary>Gets the container registry images are pushed to, or <see langword="null"/> when the environment has none.</summary>
+    public virtual IContainerRegistry? ContainerRegistry => null;
+
+    /// <summary>Gets the stack outputs captured by the most recent deploy, keyed by output name.</summary>
+    public IReadOnlyDictionary<string, string?> LastOutputs => _lastOutputs;
 
     /// <summary>
-    /// Gets the Pulumi stack name for the container registry.
+    /// Builds the provider-specific cloud resources inside the Pulumi program. Called once per <c>pulumi up</c>.
     /// </summary>
-    /// <value>Returns <c>{PulumiProjectName}-{EnvironmentName}-registry</c>.</value>
-    public string RegistryStackName => $"{PulumiProjectName}-{EnvironmentName}-registry";
-
-    /// <summary>
-    /// Gets the Pulumi stack name for the main environment.
-    /// </summary>
-    /// <value>Returns <c>{PulumiProjectName}-{EnvironmentName}</c>.</value>
-    public string EnvironmentStackName => $"{PulumiProjectName}-{EnvironmentName}";
-
-    /// <summary>
-    /// Gets a unique prefix for Azure resource naming based on project and environment.
-    /// </summary>
-    /// <value>Returns <c>{PulumiProjectName}-{EnvironmentName}</c>.</value>
-    public string ResourcePrefix => $"{PulumiProjectName}-{EnvironmentName}";
-
-    /// <summary>
-    /// Gets a deterministic seed value based on project and environment names.
-    /// </summary>
-    public int DeterministicSeed => HashCode.Combine(PulumiProjectName, EnvironmentName);
-
-    /// <summary>
-    /// Gets or sets the working directory for Pulumi operations.
-    /// If not set, uses the current directory.
-    /// </summary>
-    public string? WorkDir { get; set; }
-
-    /// <summary>
-    /// Gets the last deployment outputs.
-    /// Available after a successful deployment.
-    /// </summary>
-    public IDictionary<string, OutputValue>? LastOutputs => _lastOutputs;
+    /// <param name="context">The publishing context for the running program.</param>
+    public abstract Task CreateStackResourcesAsync(PulumiPublishingContext context);
 
     /// <inheritdoc />
     public abstract ReferenceExpression GetHostAddressExpression(EndpointReference endpointReference);
 
-    /// <inheritdoc />
-    public abstract Task CreateResourcesAsync(PulumiPublishingContext context);
-
     /// <summary>
-    /// Creates the pipeline steps for this environment.
-    /// </summary>
-    protected virtual async Task<IEnumerable<PipelineStep>> CreatePipelineStepsAsync(PipelineStepFactoryContext factoryContext)
-    {
-        var steps = new List<PipelineStep>();
-
-        // Main deploy step
-        var deployStep = new PipelineStep
-        {
-            Name = PulumiWellKnownPipelineSteps.Deploy(Name),
-            Description = $"Deploys resources to {Name} using Pulumi.",
-            Action = DeployAsync,
-            Resource = this,
-            Tags = [PulumiWellKnownPipelineSteps.PulumiTag]
-        };
-        deployStep.RequiredBy(WellKnownPipelineSteps.Deploy);
-        // Deploy depends on Push (which includes building and pushing images)
-        deployStep.DependsOn(WellKnownPipelineSteps.Push);
-        steps.Add(deployStep);
-
-        // Preview step
-        var previewStep = new PipelineStep
-        {
-            Name = PulumiWellKnownPipelineSteps.Preview(Name),
-            Description = $"Previews changes for {Name} using Pulumi (dry run).",
-            Action = PreviewAsync,
-            Resource = this,
-            Tags = [PulumiWellKnownPipelineSteps.PreviewTag]
-        };
-        previewStep.DependsOn(WellKnownPipelineSteps.PublishPrereq);
-        steps.Add(previewStep);
-
-        // Destroy step
-        var destroyStep = new PipelineStep
-        {
-            Name = PulumiWellKnownPipelineSteps.Destroy(Name),
-            Description = $"Destroys all resources in {Name} using Pulumi.",
-            Action = DestroyAsync,
-            Resource = this,
-            Tags = [PulumiWellKnownPipelineSteps.DestroyTag]
-        };
-        steps.Add(destroyStep);
-
-        // Print summary step
-        var printSummaryStep = new PipelineStep
-        {
-            Name = PulumiWellKnownPipelineSteps.PrintSummary(Name),
-            Description = $"Prints deployment summary for {Name}.",
-            Action = PrintSummaryAsync,
-            Resource = this,
-            Tags = [PulumiWellKnownPipelineSteps.PrintSummaryTag],
-            DependsOnSteps = [PulumiWellKnownPipelineSteps.Deploy(Name)],
-            RequiredBySteps = [WellKnownPipelineSteps.Deploy]
-        };
-        steps.Add(printSummaryStep);
-
-        await Task.CompletedTask;
-        return steps;
-    }
-
-    /// <summary>
-    /// Gets or creates the Pulumi stack using the Automation API.
-    /// </summary>
-    /// <param name="context">The pipeline step context.</param>
-    /// <returns>The workspace stack.</returns>
-    protected virtual async Task<WorkspaceStack> GetOrCreateStackAsync(PipelineStepContext context)
-    {
-        if (_stack is not null)
-        {
-            return _stack;
-        }
-
-        var logger = context.Services.GetRequiredService<ILoggerFactory>()
-            .CreateLogger<PulumiEnvironmentResource>();
-
-        var projectName = PulumiProjectName;
-        var stackName = EnvironmentStackName;
-        var workDir = WorkDir ?? Environment.CurrentDirectory;
-
-        logger.LogDebug(
-            "Creating Pulumi stack '{StackName}' for project '{ProjectName}' in '{WorkDir}'",
-            stackName, projectName, workDir);
-
-        // Create the inline program that will create resources
-        var program = PulumiFn.Create(async () =>
-        {
-            var publishingContext = new PulumiPublishingContext(
-                context.Model,
-                this,
-                context,
-                context.ExecutionContext,
-                logger);
-
-            // Let the provider-specific implementation create resources
-            await CreateResourcesAsync(publishingContext);
-
-            // Return outputs
-            return publishingContext.BuildOutputs();
-        });
-
-        // Create or select the stack
-        try
-        {
-            _stack = await LocalWorkspace.CreateOrSelectStackAsync(
-                new InlineProgramArgs(projectName, stackName, program)
-                {
-                    WorkDir = workDir
-                },
-                context.CancellationToken);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Failed to create or select Pulumi stack '{StackName}'", stackName);
-            throw;
-        }
-
-        // Apply any stack configuration
-        await ConfigureStackAsync(_stack, context, logger);
-
-        logger.LogInformation(
-            "Created Pulumi stack '{StackName}' for project '{ProjectName}'",
-            stackName, projectName);
-
-        return _stack;
-    }
-
-    /// <summary>
-    /// Configures the stack with any required settings.
-    /// Override in derived classes to add provider-specific configuration.
+    /// Configures the Pulumi stack (for example provider configuration) before an operation runs.
     /// </summary>
     /// <param name="stack">The workspace stack.</param>
     /// <param name="context">The pipeline step context.</param>
-    /// <param name="logger">The logger instance.</param>
-    protected virtual Task ConfigureStackAsync(
-        WorkspaceStack stack,
-        PipelineStepContext context,
-        ILogger logger)
+    protected virtual Task ConfigureStackAsync(WorkspaceStack stack, PipelineStepContext context) => Task.CompletedTask;
+
+    private async Task<IEnumerable<PipelineStep>> CreatePipelineStepsAsync(PipelineStepFactoryContext factoryContext)
     {
-        // Base implementation does nothing
-        // Provider packages can override to set provider-specific config
+        var model = factoryContext.PipelineContext.Model;
+        var steps = new List<PipelineStep>
+        {
+            new()
+            {
+                Name = PulumiPipelineSteps.PrepareDeploymentTargets(Name),
+                Description = $"Prepares Pulumi deployment targets for {Name}.",
+                Action = PrepareDeploymentTargetsAsync,
+                DependsOnSteps = [WellKnownPipelineSteps.ValidateComputeEnvironments],
+                RequiredBySteps = [WellKnownPipelineSteps.BeforeStart],
+                Resource = this,
+            },
+            new()
+            {
+                Name = PulumiPipelineSteps.Publish(Name),
+                Description = $"Writes a Pulumi preview artifact for {Name}.",
+                Action = WritePublishArtifactAsync,
+                DependsOnSteps = [WellKnownPipelineSteps.PublishPrereq],
+                RequiredBySteps = [WellKnownPipelineSteps.Publish],
+                Resource = this,
+            },
+            new()
+            {
+                Name = PulumiPipelineSteps.Deploy(Name),
+                Description = $"Deploys {Name} using the Pulumi Automation API.",
+                Action = DeployAsync,
+                // Deploy after images are pushed so Container Apps reference real registry tags.
+                DependsOnSteps = [WellKnownPipelineSteps.Push],
+                RequiredBySteps = [WellKnownPipelineSteps.Deploy],
+                Tags = [PulumiPipelineSteps.PulumiTag],
+                Resource = this,
+            },
+            new()
+            {
+                Name = PulumiPipelineSteps.Destroy(Name),
+                Description = $"Destroys all resources in {Name} using Pulumi.",
+                Action = DestroyAsync,
+                DependsOnSteps = [WellKnownPipelineSteps.DestroyPrereq],
+                RequiredBySteps = [WellKnownPipelineSteps.Destroy],
+                Resource = this,
+            },
+        };
+
+        // Expand each deployment target's own steps (e.g. print-summary). The targets are not part of the
+        // application model, so the environment resolves and inlines their PipelineStepAnnotation steps. This
+        // relies on the prepare step having already run during the before-start phase.
+        foreach (var (_, target) in EnumerateTargetResources(model))
+        {
+            if (target.TryGetAnnotationsOfType<PipelineStepAnnotation>(out var annotations))
+            {
+                foreach (var annotation in annotations)
+                {
+                    var childContext = new PipelineStepFactoryContext
+                    {
+                        PipelineContext = factoryContext.PipelineContext,
+                        Resource = target,
+                    };
+
+                    var childSteps = await annotation.CreateStepsAsync(childContext).ConfigureAwait(false);
+                    foreach (var step in childSteps)
+                    {
+                        step.Resource ??= target;
+                    }
+
+                    steps.AddRange(childSteps);
+                }
+            }
+        }
+
+        return steps;
+    }
+
+    private void ConfigurePipeline(PipelineConfigurationContext context)
+    {
+        var deployStepName = PulumiPipelineSteps.Deploy(Name);
+
+        foreach (var (compute, target) in EnumerateTargetResources(context.Model))
+        {
+            // Pull the framework-created build steps into the deploy phase, after deploy-prereq runs. This
+            // mirrors how the Kubernetes environment wires build steps so builds happen within deploy ordering.
+            context.GetSteps(compute, WellKnownPipelineTags.BuildCompute)
+                .RequiredBy(WellKnownPipelineSteps.Deploy)
+                .DependsOn(WellKnownPipelineSteps.DeployPrereq);
+
+            // Each target's print-summary step must run after the environment's deploy step.
+            context.GetSteps(target, PulumiPipelineSteps.PrintSummaryTag).DependsOn(deployStepName);
+        }
+    }
+
+    private Task PrepareDeploymentTargetsAsync(PipelineStepContext context)
+    {
+        // The environment is only added to the model in publish mode, but guard defensively.
+        if (context.ExecutionContext.IsRunMode)
+        {
+            return Task.CompletedTask;
+        }
+
+        var publishingContext = new PulumiPublishingContext(
+            context.Model,
+            this,
+            context.ExecutionContext,
+            context.Services,
+            context.Logger,
+            context.CancellationToken);
+
+        foreach (var compute in publishingContext.GetTargetedComputeResources())
+        {
+            var target = new PulumiDeploymentTargetResource($"{compute.Name}-pulumi", compute, this);
+
+            compute.Annotations.Add(new DeploymentTargetAnnotation(target)
+            {
+                ComputeEnvironment = this,
+                ContainerRegistry = ContainerRegistry,
+            });
+        }
+
         return Task.CompletedTask;
     }
 
-    /// <summary>
-    /// Creates the resource creation program for use with the Pulumi Automation API.
-    /// </summary>
-    /// <param name="context">The pipeline step context.</param>
-    /// <param name="logger">The logger.</param>
-    /// <returns>A function that creates resources and returns outputs.</returns>
-    protected Func<Task<IDictionary<string, object?>>> CreateProgram(PipelineStepContext context, ILogger logger)
+    private async Task WritePublishArtifactAsync(PipelineStepContext context)
     {
-        return async () =>
+        if (!context.ExecutionContext.IsPublishMode)
         {
-            var publishingContext = new PulumiPublishingContext(
-                context.Model,
-                this,
-                context,
-                context.ExecutionContext,
-                logger);
-
-            // Let the provider-specific implementation create resources
-            await CreateResourcesAsync(publishingContext);
-
-            // Return outputs
-            return publishingContext.BuildOutputs();
-        };
-    }
-
-    /// <summary>
-    /// Executes the deploy step using the Pulumi Automation API.
-    /// </summary>
-    protected virtual async Task DeployAsync(PipelineStepContext context)
-    {
-        var logger = context.Services.GetRequiredService<ILoggerFactory>()
-            .CreateLogger<PulumiEnvironmentResource>();
-
-        var runner = context.Services.GetRequiredService<PulumiRunner>();
-
-        var task = await context.ReportingStep.CreateTaskAsync(
-            $"Deploying to **{Name}** with Pulumi Automation API", context.CancellationToken);
-
-        await using (task)
-        {
-            try
-            {
-                logger.LogInformation(
-                    "Running deployment for '{Name}'...",
-                    Name);
-
-                var program = CreateProgram(context, logger);
-
-                var result = await runner.ForStack(PulumiProjectName, EnvironmentStackName)
-                    .WithWorkDir(WorkDir)
-                    .WithConfiguration((stack, ct) => ConfigureStackAsync(stack, context, logger))
-                    .RunAsync(program, context.CancellationToken);
-
-                if (!result.Success)
-                {
-                    throw new InvalidOperationException(result.ErrorMessage ?? "Deployment failed");
-                }
-
-                if (result.Outputs is not null)
-                {
-                    _lastOutputs = result.Outputs.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-                }
-
-                logger.LogInformation(
-                    "Deployment to '{Name}' completed successfully.",
-                    Name);
-
-                await task.CompleteAsync(
-                    $"Deployment to **{Name}** completed successfully.",
-                    CompletionState.Completed,
-                    context.CancellationToken);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Deployment to '{Name}' failed", Name);
-                await task.FailAsync(ex.Message, cancellationToken: context.CancellationToken);
-                throw;
-            }
-        }
-    }
-
-    /// <summary>
-    /// Executes the preview step.
-    /// </summary>
-    protected virtual async Task PreviewAsync(PipelineStepContext context)
-    {
-        var logger = context.Services.GetRequiredService<ILoggerFactory>()
-            .CreateLogger<PulumiEnvironmentResource>();
-
-        var runner = context.Services.GetRequiredService<PulumiRunner>();
-
-        var task = await context.ReportingStep.CreateTaskAsync(
-            $"Previewing changes for **{Name}** with Pulumi Automation API", context.CancellationToken);
-
-        await using (task)
-        {
-            try
-            {
-                logger.LogInformation(
-                    "Running preview for '{Name}'...",
-                    Name);
-
-                var program = CreateProgram(context, logger);
-
-                var result = await runner.ForStack(PulumiProjectName, EnvironmentStackName)
-                    .WithWorkDir(WorkDir)
-                    .WithConfiguration((stack, ct) => ConfigureStackAsync(stack, context, logger))
-                    .PreviewAsync(program, context.CancellationToken);
-
-                if (!result.Success)
-                {
-                    throw new InvalidOperationException(result.ErrorMessage ?? "Preview failed");
-                }
-
-                var changeCount = result.ChangeSummary?.Count ?? 0;
-
-                logger.LogInformation(
-                    "Preview for '{Name}' completed. {ChangeCount} changes detected.",
-                    Name, changeCount);
-
-                await task.CompleteAsync(
-                    $"Preview for **{Name}** completed. {changeCount} changes detected.",
-                    CompletionState.Completed,
-                    context.CancellationToken);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Preview for '{Name}' failed", Name);
-                await task.FailAsync(ex.Message, cancellationToken: context.CancellationToken);
-                throw;
-            }
-        }
-    }
-
-    /// <summary>
-    /// Executes the destroy step using the Automation API.
-    /// </summary>
-    protected virtual async Task DestroyAsync(PipelineStepContext context)
-    {
-        var logger = context.Services.GetRequiredService<ILoggerFactory>()
-            .CreateLogger<PulumiEnvironmentResource>();
-
-        var task = await context.ReportingStep.CreateTaskAsync(
-            $"Destroying resources in **{Name}**", context.CancellationToken);
-
-        await using (task)
-        {
-            try
-            {
-                var stack = await GetOrCreateStackAsync(context);
-
-                logger.LogInformation("Running 'pulumi destroy' for stack '{StackName}'...", Name);
-
-                var result = await stack.DestroyAsync(new DestroyOptions
-                {
-                    OnStandardOutput = msg => logger.LogInformation("{Message}", msg),
-                    OnStandardError = msg => logger.LogError("{Message}", msg),
-                    OnEvent = evt => HandlePulumiEvent(evt, logger)
-                }, context.CancellationToken);
-
-                logger.LogInformation(
-                    "Destroy for stack '{StackName}' completed. Summary: {Summary}",
-                    Name,
-                    result.Summary.Message);
-
-                await task.CompleteAsync(
-                    $"Resources in **{Name}** destroyed successfully.",
-                    CompletionState.Completed,
-                    context.CancellationToken);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Destroy for stack '{StackName}' failed", Name);
-                await task.FailAsync(ex.Message, cancellationToken: context.CancellationToken);
-                throw;
-            }
-        }
-    }
-
-    /// <summary>
-    /// Prints a summary of the deployment outputs.
-    /// </summary>
-    protected virtual async Task PrintSummaryAsync(PipelineStepContext context)
-    {
-        var logger = context.Services.GetRequiredService<ILoggerFactory>()
-            .CreateLogger<PulumiEnvironmentResource>();
-
-        if (_stack is null)
-        {
-            logger.LogWarning("No stack available for print summary");
             return;
         }
 
-        try
-        {
-            var outputs = await _stack.GetOutputsAsync(context.CancellationToken);
+        var logger = context.Services.GetRequiredService<ILoggerFactory>().CreateLogger<PulumiEnvironmentResource>();
+        var runner = context.Services.GetRequiredService<PulumiRunner>();
 
-            if (outputs.Count == 0)
-            {
-                logger.LogInformation("No outputs available for stack '{StackName}'", Name);
-                return;
-            }
+        var task = await context.ReportingStep.CreateTaskAsync(
+            $"Generating Pulumi preview for **{Name}**", context.CancellationToken).ConfigureAwait(false);
 
-            logger.LogInformation("Stack '{StackName}' outputs:", Name);
-            foreach (var (key, value) in outputs)
-            {
-                var displayValue = value.IsSecret ? "***" : value.Value?.ToString() ?? "(null)";
-                logger.LogInformation("  {Key}: {Value}", key, displayValue);
-            }
-        }
-        catch (Exception ex)
+        await using (task.ConfigureAwait(false))
         {
-            logger.LogWarning(ex, "Failed to get outputs for stack '{StackName}'", Name);
+            try
+            {
+                var result = await runner.ForStack(PulumiProjectName, StackName)
+                    .WithWorkDir(WorkingDirectory)
+                    .WithConfiguration((stack, _) => ConfigureStackAsync(stack, context))
+                    .PreviewAsync(() => RunProgramAsync(context, logger), context.CancellationToken)
+                    .ConfigureAwait(false);
+
+                var outputDirectory = ResolveOutputDirectory(context);
+                Directory.CreateDirectory(outputDirectory);
+                var artifactPath = Path.Combine(outputDirectory, $"pulumi-{Name}-preview.txt");
+                await File.WriteAllTextAsync(artifactPath, result.StandardOutput, context.CancellationToken).ConfigureAwait(false);
+
+                await task.CompleteAsync(
+                    $"Wrote Pulumi preview for **{Name}** to `{artifactPath}`.",
+                    CompletionState.Completed,
+                    context.CancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                await task.CompleteAsync(ex.Message, CompletionState.CompletedWithError, context.CancellationToken).ConfigureAwait(false);
+                throw;
+            }
         }
     }
 
-    /// <summary>
-    /// Handles Pulumi engine events during operations.
-    /// </summary>
-    /// <param name="engineEvent">The engine event.</param>
-    /// <param name="logger">The logger instance.</param>
-    protected virtual void HandlePulumiEvent(EngineEvent engineEvent, ILogger logger)
+    private async Task DeployAsync(PipelineStepContext context)
     {
-        // Log resource progress events
-        if (engineEvent.ResourcePreEvent is { } preEvent)
-        {
-            logger.LogDebug(
-                "  {Operation} {Type} {Name}...",
-                preEvent.Metadata.Op,
-                preEvent.Metadata.Type,
-                preEvent.Metadata.Urn);
-        }
+        var logger = context.Services.GetRequiredService<ILoggerFactory>().CreateLogger<PulumiEnvironmentResource>();
+        var runner = context.Services.GetRequiredService<PulumiRunner>();
 
-        if (engineEvent.ResourceOutputsEvent is { } outputEvent)
-        {
-            logger.LogDebug(
-                "  {Type} {Name} complete",
-                outputEvent.Metadata.Type,
-                outputEvent.Metadata.Urn);
-        }
+        var task = await context.ReportingStep.CreateTaskAsync(
+            $"Deploying **{Name}** with the Pulumi Automation API", context.CancellationToken).ConfigureAwait(false);
 
-        if (engineEvent.DiagnosticEvent is { } diagEvent)
+        await using (task.ConfigureAwait(false))
         {
-            var severity = diagEvent.Severity;
-            var message = diagEvent.Message;
-
-            switch (severity)
+            try
             {
-                case "error":
-                    logger.LogError("{Message}", message);
-                    break;
-                case "warning":
-                    logger.LogWarning("{Message}", message);
-                    break;
-                case "info":
-                    logger.LogInformation("{Message}", message);
-                    break;
-                default:
-                    logger.LogDebug("{Message}", message);
-                    break;
+                var result = await runner.ForStack(PulumiProjectName, StackName)
+                    .WithWorkDir(WorkingDirectory)
+                    .WithConfiguration((stack, _) => ConfigureStackAsync(stack, context))
+                    .UpAsync(() => RunProgramAsync(context, logger), context.CancellationToken)
+                    .ConfigureAwait(false);
+
+                CaptureOutputs(context.Model, result.Outputs);
+
+                await task.CompleteAsync(
+                    $"Deployed **{Name}** successfully.",
+                    CompletionState.Completed,
+                    context.CancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // Fault output references so callers awaiting them observe the failure instead of hanging.
+                FaultOutputs(context.Model, ex);
+                await task.CompleteAsync(ex.Message, CompletionState.CompletedWithError, context.CancellationToken).ConfigureAwait(false);
+                throw;
             }
         }
+    }
+
+    private async Task DestroyAsync(PipelineStepContext context)
+    {
+        var logger = context.Services.GetRequiredService<ILoggerFactory>().CreateLogger<PulumiEnvironmentResource>();
+        var runner = context.Services.GetRequiredService<PulumiRunner>();
+
+        var task = await context.ReportingStep.CreateTaskAsync(
+            $"Destroying resources in **{Name}**", context.CancellationToken).ConfigureAwait(false);
+
+        await using (task.ConfigureAwait(false))
+        {
+            try
+            {
+                await runner.ForStack(PulumiProjectName, StackName)
+                    .WithWorkDir(WorkingDirectory)
+                    .WithConfiguration((stack, _) => ConfigureStackAsync(stack, context))
+                    .DestroyAsync(() => RunProgramAsync(context, logger), context.CancellationToken)
+                    .ConfigureAwait(false);
+
+                await task.CompleteAsync(
+                    $"Destroyed resources in **{Name}**.",
+                    CompletionState.Completed,
+                    context.CancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                await task.CompleteAsync(ex.Message, CompletionState.CompletedWithError, context.CancellationToken).ConfigureAwait(false);
+                throw;
+            }
+        }
+    }
+
+    private async Task<IDictionary<string, object?>> RunProgramAsync(PipelineStepContext context, ILogger logger)
+    {
+        var publishingContext = new PulumiPublishingContext(
+            context.Model,
+            this,
+            context.ExecutionContext,
+            context.Services,
+            logger,
+            context.CancellationToken);
+
+        await CreateStackResourcesAsync(publishingContext).ConfigureAwait(false);
+        return publishingContext.BuildOutputs();
+    }
+
+    private void CaptureOutputs(DistributedApplicationModel model, IReadOnlyDictionary<string, OutputValue> outputs)
+    {
+        var resolved = outputs.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Value?.ToString());
+        _lastOutputs = resolved;
+
+        foreach (var (_, target) in EnumerateTargetResources(model))
+        {
+            foreach (var reference in target.Outputs)
+            {
+                reference.SetValue(resolved.GetValueOrDefault(reference.Name));
+            }
+        }
+    }
+
+    private void FaultOutputs(DistributedApplicationModel model, Exception exception)
+    {
+        foreach (var (_, target) in EnumerateTargetResources(model))
+        {
+            foreach (var reference in target.Outputs)
+            {
+                reference.SetException(exception);
+            }
+        }
+    }
+
+    private IEnumerable<(IComputeResource compute, PulumiDeploymentTargetResource target)> EnumerateTargetResources(
+        DistributedApplicationModel model)
+    {
+        foreach (var resource in model.GetComputeResources())
+        {
+            if (resource is not IComputeResource compute)
+            {
+                continue;
+            }
+
+            if (compute.GetDeploymentTargetAnnotation(this)?.DeploymentTarget is PulumiDeploymentTargetResource target)
+            {
+                yield return (compute, target);
+            }
+        }
+    }
+
+    private static string ResolveOutputDirectory(PipelineStepContext context)
+    {
+        var outputService = context.Services.GetService<IPipelineOutputService>();
+        return outputService?.GetOutputDirectory() ?? Environment.CurrentDirectory;
     }
 }

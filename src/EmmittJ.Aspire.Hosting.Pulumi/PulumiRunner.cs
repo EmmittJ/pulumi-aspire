@@ -6,240 +6,151 @@ using Pulumi.Automation;
 namespace EmmittJ.Aspire.Hosting.Pulumi;
 
 /// <summary>
-/// Factory for creating pre-configured <see cref="PulumiStackRunner"/> instances.
+/// Creates pre-configured <see cref="PulumiStackRunner"/> instances for executing Pulumi programs
+/// through the Automation API. Registered as a singleton and injected into pipeline steps.
 /// </summary>
-/// <remarks>
-/// <para>
-/// Inject this class via DI to create runners for specific projects/stacks.
-/// This avoids repeating project name, stack name, and configuration on every call.
-/// </para>
-/// <example>
-/// <code>
-/// var result = await pulumiRunner.ForStack("my-project", "dev")
-///     .WithConfiguration(ConfigureStackAsync)
-///     .RunAsync(program, cancellationToken);
-/// </code>
-/// </example>
-/// </remarks>
 public sealed class PulumiRunner
 {
     /// <summary>
-    /// Creates a runner configured for the specified project and stack.
+    /// Creates a runner targeting the specified Pulumi project and stack.
     /// </summary>
-    /// <param name="projectName">The Pulumi project name.</param>
+    /// <param name="projectName">The Pulumi project name (groups stacks in the Pulumi console).</param>
     /// <param name="stackName">The Pulumi stack name.</param>
-    /// <returns>A builder for further configuration.</returns>
-    public PulumiStackRunnerBuilder ForStack(string projectName, string stackName)
+    public PulumiStackRunner ForStack(string projectName, string stackName)
     {
-        return new PulumiStackRunnerBuilder(projectName, stackName);
+        ArgumentException.ThrowIfNullOrEmpty(projectName);
+        ArgumentException.ThrowIfNullOrEmpty(stackName);
+        return new PulumiStackRunner(projectName, stackName);
     }
 }
 
 /// <summary>
-/// Builder for creating a configured <see cref="PulumiStackRunner"/>.
-/// </summary>
-public sealed class PulumiStackRunnerBuilder
-{
-    private readonly string _projectName;
-    private readonly string _stackName;
-    private string? _explicitWorkDir;
-    private Func<WorkspaceStack, CancellationToken, Task>? _configureStack;
-
-    internal PulumiStackRunnerBuilder(string projectName, string stackName)
-    {
-        _projectName = projectName;
-        _stackName = stackName;
-    }
-
-    /// <summary>
-    /// Sets an explicit working directory for Pulumi operations.
-    /// If not set (or null), a temp directory is used.
-    /// </summary>
-    public PulumiStackRunnerBuilder WithWorkDir(string? workDir)
-    {
-        if (!string.IsNullOrEmpty(workDir))
-        {
-            _explicitWorkDir = workDir;
-        }
-        return this;
-    }
-
-    /// <summary>
-    /// Sets a callback to configure the stack before operations.
-    /// </summary>
-    public PulumiStackRunnerBuilder WithConfiguration(Func<WorkspaceStack, CancellationToken, Task> configureStack)
-    {
-        _configureStack = configureStack;
-        return this;
-    }
-
-    /// <summary>
-    /// Builds the configured stack runner.
-    /// </summary>
-    public PulumiStackRunner Build()
-    {
-        return new PulumiStackRunner(
-            _projectName,
-            _stackName,
-            _explicitWorkDir,
-            _configureStack);
-    }
-
-    /// <summary>
-    /// Executes the Pulumi program (up/deploy).
-    /// </summary>
-    public Task<PulumiRunResult> RunAsync(
-        Func<Task<IDictionary<string, object?>>> program,
-        CancellationToken cancellationToken = default)
-        => Build().RunAsync(program, cancellationToken);
-
-    /// <summary>
-    /// Executes a Pulumi preview (dry run).
-    /// </summary>
-    public Task<PulumiRunResult> PreviewAsync(
-        Func<Task<IDictionary<string, object?>>> program,
-        CancellationToken cancellationToken = default)
-        => Build().PreviewAsync(program, cancellationToken);
-}
-
-/// <summary>
-/// A pre-configured runner for a specific Pulumi project/stack.
+/// Executes Pulumi programs (up, preview, destroy) for a single project/stack through the Automation API.
 /// </summary>
 public sealed class PulumiStackRunner
 {
     private readonly string _projectName;
     private readonly string _stackName;
-    private readonly string? _explicitWorkDir;
-    private readonly Func<WorkspaceStack, CancellationToken, Task>? _configureStack;
+    private string? _workDir;
+    private Func<WorkspaceStack, CancellationToken, Task>? _configure;
 
-    internal PulumiStackRunner(
-        string projectName,
-        string stackName,
-        string? explicitWorkDir,
-        Func<WorkspaceStack, CancellationToken, Task>? configureStack)
+    internal PulumiStackRunner(string projectName, string stackName)
     {
         _projectName = projectName;
         _stackName = stackName;
-        _explicitWorkDir = explicitWorkDir;
-        _configureStack = configureStack;
     }
 
     /// <summary>
-    /// Gets the working directory for Automation API operations.
-    /// Uses explicit work dir if set, otherwise creates a temp directory.
+    /// Sets an explicit working directory. When unset, a stable per-project temp directory is used.
     /// </summary>
-    private string GetWorkDir()
+    public PulumiStackRunner WithWorkDir(string? workDir)
     {
-        if (_explicitWorkDir is not null)
+        if (!string.IsNullOrEmpty(workDir))
         {
-            return _explicitWorkDir;
+            _workDir = workDir;
         }
 
-        // Default to temp directory to avoid picking up existing Pulumi.yaml files
-        var path = Path.Combine(Path.GetTempPath(), "pulumi-aspire", _projectName);
+        return this;
+    }
+
+    /// <summary>
+    /// Sets a callback that configures the stack (for example provider config) before the operation runs.
+    /// </summary>
+    public PulumiStackRunner WithConfiguration(Func<WorkspaceStack, CancellationToken, Task> configure)
+    {
+        _configure = configure;
+        return this;
+    }
+
+    /// <summary>
+    /// Runs <c>pulumi up</c> for the inline program and returns the deployment result.
+    /// </summary>
+    /// <param name="program">The inline program that creates resources and returns stack outputs.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    public async Task<PulumiUpResult> UpAsync(
+        Func<Task<IDictionary<string, object?>>> program,
+        CancellationToken cancellationToken = default)
+    {
+        var stack = await CreateStackAsync(program, cancellationToken).ConfigureAwait(false);
+
+        // UpAsync throws CommandException on failure; let it propagate so callers report the real error
+        // instead of inspecting a synthetic success flag.
+        var result = await stack.UpAsync(new UpOptions(), cancellationToken).ConfigureAwait(false);
+
+        return new PulumiUpResult(result.Outputs, result.Summary);
+    }
+
+    /// <summary>
+    /// Runs <c>pulumi preview</c> (dry run) for the inline program and returns the change summary.
+    /// </summary>
+    public async Task<PulumiPreviewResult> PreviewAsync(
+        Func<Task<IDictionary<string, object?>>> program,
+        CancellationToken cancellationToken = default)
+    {
+        var stack = await CreateStackAsync(program, cancellationToken).ConfigureAwait(false);
+        var result = await stack.PreviewAsync(new PreviewOptions(), cancellationToken).ConfigureAwait(false);
+
+        return new PulumiPreviewResult(result.ChangeSummary, result.StandardOutput);
+    }
+
+    /// <summary>
+    /// Runs <c>pulumi destroy</c> for the inline program.
+    /// </summary>
+    public async Task DestroyAsync(
+        Func<Task<IDictionary<string, object?>>> program,
+        CancellationToken cancellationToken = default)
+    {
+        var stack = await CreateStackAsync(program, cancellationToken).ConfigureAwait(false);
+        await stack.DestroyAsync(new DestroyOptions(), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<WorkspaceStack> CreateStackAsync(
+        Func<Task<IDictionary<string, object?>>> program,
+        CancellationToken cancellationToken)
+    {
+        var stack = await LocalWorkspace.CreateOrSelectStackAsync(
+            new InlineProgramArgs(_projectName, _stackName, PulumiFn.Create(program))
+            {
+                WorkDir = GetWorkDir()
+            },
+            cancellationToken).ConfigureAwait(false);
+
+        if (_configure is not null)
+        {
+            await _configure(stack, cancellationToken).ConfigureAwait(false);
+        }
+
+        return stack;
+    }
+
+    private string GetWorkDir()
+    {
+        if (_workDir is not null)
+        {
+            return _workDir;
+        }
+
+        // Use a deterministic per-project temp directory rather than Directory.CreateTempSubdirectory():
+        // the working directory must remain stable across up/preview/destroy for the same project so the
+        // inline-program Pulumi.yaml/settings persist. State itself lives in the configured Pulumi backend,
+        // not here. A dedicated directory also avoids picking up an ambient Pulumi.yaml from the AppHost cwd.
+        var sanitized = string.Concat(_projectName.Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' ? c : '-'));
+        var path = Path.Combine(Path.GetTempPath(), "pulumi-aspire", sanitized);
         Directory.CreateDirectory(path);
         return path;
     }
-
-    /// <summary>
-    /// Executes the Pulumi program (up/deploy) via the Automation API.
-    /// </summary>
-    public Task<PulumiRunResult> RunAsync(
-        Func<Task<IDictionary<string, object?>>> program,
-        CancellationToken cancellationToken = default)
-        => RunWithAutomationApiAsync(program, cancellationToken);
-
-    /// <summary>
-    /// Executes a Pulumi preview (dry run) via the Automation API.
-    /// </summary>
-    public Task<PulumiRunResult> PreviewAsync(
-        Func<Task<IDictionary<string, object?>>> program,
-        CancellationToken cancellationToken = default)
-        => PreviewWithAutomationApiAsync(program, cancellationToken);
-
-    private async Task<PulumiRunResult> RunWithAutomationApiAsync(
-        Func<Task<IDictionary<string, object?>>> program,
-        CancellationToken cancellationToken)
-    {
-        var pulumiFn = PulumiFn.Create(program);
-
-        var stack = await LocalWorkspace.CreateOrSelectStackAsync(
-            new InlineProgramArgs(_projectName, _stackName, pulumiFn)
-            {
-                WorkDir = GetWorkDir()
-            },
-            cancellationToken);
-
-        if (_configureStack is not null)
-        {
-            await _configureStack(stack, cancellationToken);
-        }
-
-        var result = await stack.UpAsync(new UpOptions(), cancellationToken);
-
-        return new PulumiRunResult
-        {
-            Success = true,
-            Outputs = result.Outputs,
-            Summary = result.Summary
-        };
-    }
-
-    private async Task<PulumiRunResult> PreviewWithAutomationApiAsync(
-        Func<Task<IDictionary<string, object?>>> program,
-        CancellationToken cancellationToken)
-    {
-        var pulumiFn = PulumiFn.Create(program);
-
-        var stack = await LocalWorkspace.CreateOrSelectStackAsync(
-            new InlineProgramArgs(_projectName, _stackName, pulumiFn)
-            {
-                WorkDir = GetWorkDir()
-            },
-            cancellationToken);
-
-        if (_configureStack is not null)
-        {
-            await _configureStack(stack, cancellationToken);
-        }
-
-        var result = await stack.PreviewAsync(new PreviewOptions(), cancellationToken);
-
-        return new PulumiRunResult
-        {
-            Success = true,
-            ChangeSummary = result.ChangeSummary
-        };
-    }
 }
 
-/// <summary>
-/// Result of a Pulumi program execution.
-/// </summary>
-public sealed class PulumiRunResult
-{
-    /// <summary>
-    /// Gets or sets whether the execution succeeded.
-    /// </summary>
-    public bool Success { get; set; }
+/// <summary>Result of a <c>pulumi up</c> operation.</summary>
+/// <param name="Outputs">The stack outputs.</param>
+/// <param name="Summary">The update summary.</param>
+public sealed record PulumiUpResult(
+    IImmutableDictionary<string, OutputValue> Outputs,
+    UpdateSummary Summary);
 
-    /// <summary>
-    /// Gets or sets the error message if execution failed.
-    /// </summary>
-    public string? ErrorMessage { get; set; }
-
-    /// <summary>
-    /// Gets or sets the stack outputs.
-    /// </summary>
-    public IImmutableDictionary<string, OutputValue>? Outputs { get; set; }
-
-    /// <summary>
-    /// Gets or sets the update summary.
-    /// </summary>
-    public UpdateSummary? Summary { get; set; }
-
-    /// <summary>
-    /// Gets or sets the change summary for preview.
-    /// </summary>
-    public IImmutableDictionary<OperationType, int>? ChangeSummary { get; set; }
-}
+/// <summary>Result of a <c>pulumi preview</c> operation.</summary>
+/// <param name="ChangeSummary">The per-operation change counts.</param>
+/// <param name="StandardOutput">The human-readable preview output, suitable for a reviewable artifact.</param>
+public sealed record PulumiPreviewResult(
+    IImmutableDictionary<OperationType, int> ChangeSummary,
+    string StandardOutput);
