@@ -4,7 +4,7 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/EmmittJ.Aspire.Hosting.Pulumi/EmmittJ.Aspire.Hosting.Pulumi.csproj" />
-    <Project Path="src/EmmittJ.Aspire.Hosting.Pulumi.Azure/EmmittJ.Aspire.Hosting.Pulumi.Azure.csproj" />
+    <Project Path="src/EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers/EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/EmmittJ.Aspire.Hosting.Pulumi.Tests/EmmittJ.Aspire.Hosting.Pulumi.Tests.csproj" />

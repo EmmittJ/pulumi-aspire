@@ -21,7 +21,7 @@ flowchart LR
 
 - **AddViteApp**: Vite-based frontend application
 - **AddYarp**: Reverse proxy with dual-mode routing
-- **AddPulumiAzureEnvironment**: Azure Container Apps deployment via Pulumi
+- **AddPulumiAzureContainerAppEnvironment**: Azure Container Apps deployment via Pulumi
 - **PublishWithStaticFiles**: Automatic static file serving in production
 
 ## Prerequisites
@@ -65,9 +65,9 @@ builder.AddYarp("app")
     .PublishWithStaticFiles(frontend); // Publish: serve static files
 ```
 
-**Pulumi Azure Environment** - Deploys to Azure Container Apps:
+**Pulumi Azure Container Apps Environment** - Deploys to Azure Container Apps:
 ```csharp
-builder.AddPulumiAzureEnvironment("dev", "vite-yarp-static")
+builder.AddPulumiAzureContainerAppEnvironment("dev", "vite-yarp-static")
     .WithLocation("eastus");
 ```
 

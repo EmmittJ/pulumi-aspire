@@ -23,7 +23,7 @@ It currently focuses on:
 | Package | Description | Status |
 |---------|-------------|--------|
 | `EmmittJ.Aspire.Hosting.Pulumi` | Core abstractions, lifecycle hooks, and Pulumi Automation API integration | Not yet published |
-| `EmmittJ.Aspire.Hosting.Pulumi.Azure` | Azure Container Apps provider for compute and resource translation | Not yet published |
+| `EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers` | Azure Container Apps provider for compute and resource translation | Not yet published |
 
 ## 🚀 Getting Started
 
@@ -36,10 +36,10 @@ It currently focuses on:
 
 ### Installation
 
-Add the Pulumi Azure package to your AppHost project:
+Add the Pulumi Azure Container Apps package to your AppHost project:
 
 ```bash
-dotnet add package EmmittJ.Aspire.Hosting.Pulumi.Azure
+dotnet add package EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers
 ```
 
 ### Quick Start
@@ -47,14 +47,12 @@ dotnet add package EmmittJ.Aspire.Hosting.Pulumi.Azure
 1. **Configure your AppHost:**
 
 ```csharp
-using EmmittJ.Aspire.Hosting.Pulumi.Azure;
-
 var builder = DistributedApplication.CreateBuilder(args);
 
-// Add Pulumi Azure environment
+// Add Pulumi Azure Container Apps environment
 // "dev" = environment name (becomes part of stack name)
 // "my-app" = project name (groups stacks in Pulumi console)
-var azure = builder.AddPulumiAzureEnvironment("dev", "my-app")
+var azure = builder.AddPulumiAzureContainerAppEnvironment("dev", "my-app")
     .WithLocation("eastus");
 
 // Add your resources
@@ -99,7 +97,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the implementation details 
 ### Azure Environment Options
 
 ```csharp
-builder.AddPulumiAzureEnvironment("dev", "my-app")
+builder.AddPulumiAzureContainerAppEnvironment("dev", "my-app")
     .WithLocation("eastus")                    // Azure region
     .WithResourceGroup("my-existing-rg")       // Use existing resource group
     .WithManagedEnvironment("my-existing-env"); // Use existing Container Apps environment
@@ -119,9 +117,9 @@ builder.AddContainer("api", "myimage")
 
 ```csharp
 // Each environment creates a separate Pulumi stack
-builder.AddPulumiAzureEnvironment("dev", "my-app");    // Stack: my-app/my-app-dev
-builder.AddPulumiAzureEnvironment("staging", "my-app"); // Stack: my-app/my-app-staging
-builder.AddPulumiAzureEnvironment("prod", "my-app");    // Stack: my-app/my-app-prod
+builder.AddPulumiAzureContainerAppEnvironment("dev", "my-app");    // Stack: my-app/my-app-dev
+builder.AddPulumiAzureContainerAppEnvironment("staging", "my-app"); // Stack: my-app/my-app-staging
+builder.AddPulumiAzureContainerAppEnvironment("prod", "my-app");    // Stack: my-app/my-app-prod
 ```
 
 ## 🗺️ Potential follow-ups

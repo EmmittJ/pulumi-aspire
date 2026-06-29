@@ -8,15 +8,15 @@ using Pulumi.AzureNative.App;
 using Pulumi.AzureNative.App.Inputs;
 using PulumiResource = Pulumi.Resource;
 
-namespace EmmittJ.Aspire.Hosting.Pulumi.Azure;
+namespace EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers;
 
 /// <summary>
 /// Translates a single Aspire compute resource into an Azure <see cref="ContainerApp"/>.
 /// </summary>
-public sealed class PulumiAzureComputeResourceContext : PulumiComputeResourceContext
+public sealed class PulumiAzureContainerAppContext : PulumiComputeResourceContext
 {
-    private readonly PulumiAzureEnvironmentContext _environmentContext;
-    private readonly PulumiAzureEnvironmentResource _environment;
+    private readonly PulumiAzureContainerAppEnvironmentContext _environmentContext;
+    private readonly PulumiAzureContainerAppEnvironmentResource _environment;
 
     private bool _endpointsProcessed;
     private (int? Port, bool Http2, bool External)? _httpIngress;
@@ -26,13 +26,13 @@ public sealed class PulumiAzureComputeResourceContext : PulumiComputeResourceCon
         string Scheme, string Host, int Port, int? TargetPort, bool IsHttpIngress, bool External, bool TlsEnabled);
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="PulumiAzureComputeResourceContext"/> class.
+    /// Initializes a new instance of the <see cref="PulumiAzureContainerAppContext"/> class.
     /// </summary>
     /// <param name="computeResource">The source Aspire compute resource.</param>
     /// <param name="environmentContext">The per-deploy environment context that owns sibling contexts.</param>
-    internal PulumiAzureComputeResourceContext(
+    internal PulumiAzureContainerAppContext(
         IComputeResource computeResource,
-        PulumiAzureEnvironmentContext environmentContext)
+        PulumiAzureContainerAppEnvironmentContext environmentContext)
         : base(computeResource, environmentContext.PublishingContext)
     {
         _environmentContext = environmentContext;

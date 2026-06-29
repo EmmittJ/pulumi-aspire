@@ -2,7 +2,7 @@
 
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
-using EmmittJ.Aspire.Hosting.Pulumi.Azure;
+using EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Pulumi;
@@ -38,7 +38,7 @@ public class PulumiValueResolverTests
 
         context = new PulumiPublishingContext(
             model,
-            new PulumiAzureEnvironmentResource("dev"),
+            new PulumiAzureContainerAppEnvironmentResource("dev"),
             executionContext,
             app.Services,
             NullLogger.Instance,

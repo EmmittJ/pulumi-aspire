@@ -2,9 +2,9 @@
 
 var builder = DistributedApplication.CreateBuilder(args);
 
-// Add Pulumi Azure environment for cloud deployment
+// Add Pulumi Azure Container Apps environment for cloud deployment
 // The name "dev" becomes the Pulumi stack name
-var azure = builder.AddPulumiAzureEnvironment("dev", "vite-yarp-static")
+var azure = builder.AddPulumiAzureContainerAppEnvironment("dev", "vite-yarp-static")
     .WithLocation("eastus");
 
 // Add Vite frontend

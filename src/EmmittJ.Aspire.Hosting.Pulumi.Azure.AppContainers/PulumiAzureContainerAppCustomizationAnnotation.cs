@@ -3,7 +3,7 @@
 using EmmittJ.Aspire.Hosting.Pulumi;
 using Pulumi.AzureNative.App;
 
-namespace EmmittJ.Aspire.Hosting.Pulumi.Azure;
+namespace EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers;
 
 /// <summary>
 /// Customizes the Azure <see cref="ContainerApp"/> created for a compute resource during deploy.

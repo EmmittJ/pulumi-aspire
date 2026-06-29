@@ -1,6 +1,6 @@
 // Licensed under the Apache License, Version 2.0.
 
-using EmmittJ.Aspire.Hosting.Pulumi.Azure;
+using EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers;
 using Xunit;
 
 namespace EmmittJ.Aspire.Hosting.Pulumi.Tests;
@@ -12,7 +12,7 @@ public class PulumiAzureFqdnTests
     [Fact]
     public void ExternalHttpIngress_UsesPublicFqdn()
     {
-        var host = PulumiAzureComputeResourceContext.BuildFqdnHost("frontend", httpIngress: true, external: true, Domain);
+        var host = PulumiAzureContainerAppContext.BuildFqdnHost("frontend", httpIngress: true, external: true, Domain);
 
         Assert.Equal($"frontend.{Domain}", host);
     }
@@ -20,7 +20,7 @@ public class PulumiAzureFqdnTests
     [Fact]
     public void InternalHttpIngress_UsesInternalFqdn()
     {
-        var host = PulumiAzureComputeResourceContext.BuildFqdnHost("api", httpIngress: true, external: false, Domain);
+        var host = PulumiAzureContainerAppContext.BuildFqdnHost("api", httpIngress: true, external: false, Domain);
 
         Assert.Equal($"api.internal.{Domain}", host);
     }
@@ -32,7 +32,7 @@ public class PulumiAzureFqdnTests
     {
         // TCP endpoints are reachable by the app's internal DNS name within the environment; the managed
         // environment domain does not apply.
-        var host = PulumiAzureComputeResourceContext.BuildFqdnHost("cache", httpIngress: false, external, Domain);
+        var host = PulumiAzureContainerAppContext.BuildFqdnHost("cache", httpIngress: false, external, Domain);
 
         Assert.Equal("cache", host);
     }

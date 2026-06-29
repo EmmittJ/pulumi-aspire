@@ -2,19 +2,19 @@
 
 using Aspire.Hosting.ApplicationModel;
 using EmmittJ.Aspire.Hosting.Pulumi;
-using EmmittJ.Aspire.Hosting.Pulumi.Azure;
+using EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers;
 using Pulumi.AzureNative.App;
 
 // Extension methods that operate on IDistributedApplicationBuilder / IResourceBuilder live in the
 // Aspire.Hosting namespace so they are discoverable without an extra using, matching every official
 // Aspire integration (Kubernetes, Azure Container Apps, Docker Compose). The resource, context, and
-// annotation types remain in the EmmittJ.Aspire.Hosting.Pulumi.Azure package namespace.
+// annotation types remain in the EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers package namespace.
 namespace Aspire.Hosting;
 
 /// <summary>
 /// Extension methods for adding a Pulumi-managed Azure Container Apps environment to an Aspire application.
 /// </summary>
-public static class PulumiAzureEnvironmentExtensions
+public static class PulumiAzureContainerAppExtensions
 {
     /// <summary>
     /// Adds a Pulumi Azure environment that deploys compute resources to Azure Container Apps.
@@ -27,7 +27,7 @@ public static class PulumiAzureEnvironmentExtensions
     /// The environment and its container registry are only added to the model in publish mode, so they never
     /// appear as resources during <c>aspire run</c>.
     /// </remarks>
-    public static IResourceBuilder<PulumiAzureEnvironmentResource> AddPulumiAzureEnvironment(
+    public static IResourceBuilder<PulumiAzureContainerAppEnvironmentResource> AddPulumiAzureContainerAppEnvironment(
         this IDistributedApplicationBuilder builder,
         [ResourceName] string name,
         string? projectName = null)
@@ -37,7 +37,7 @@ public static class PulumiAzureEnvironmentExtensions
 
         builder.AddPulumiInfrastructureCore();
 
-        var resource = new PulumiAzureEnvironmentResource(name, projectName);
+        var resource = new PulumiAzureContainerAppEnvironmentResource(name, projectName);
 
         if (builder.ExecutionContext.IsRunMode)
         {
@@ -53,8 +53,8 @@ public static class PulumiAzureEnvironmentExtensions
     /// <summary>Configures the Azure region for the environment.</summary>
     /// <param name="builder">The resource builder.</param>
     /// <param name="location">The Azure region (for example <c>eastus</c>).</param>
-    public static IResourceBuilder<PulumiAzureEnvironmentResource> WithLocation(
-        this IResourceBuilder<PulumiAzureEnvironmentResource> builder,
+    public static IResourceBuilder<PulumiAzureContainerAppEnvironmentResource> WithLocation(
+        this IResourceBuilder<PulumiAzureContainerAppEnvironmentResource> builder,
         string location)
     {
         ArgumentNullException.ThrowIfNull(builder);
@@ -67,8 +67,8 @@ public static class PulumiAzureEnvironmentExtensions
     /// <summary>Configures an existing resource group to deploy into instead of creating one.</summary>
     /// <param name="builder">The resource builder.</param>
     /// <param name="resourceGroupName">The existing resource group name.</param>
-    public static IResourceBuilder<PulumiAzureEnvironmentResource> WithResourceGroup(
-        this IResourceBuilder<PulumiAzureEnvironmentResource> builder,
+    public static IResourceBuilder<PulumiAzureContainerAppEnvironmentResource> WithResourceGroup(
+        this IResourceBuilder<PulumiAzureContainerAppEnvironmentResource> builder,
         string resourceGroupName)
     {
         ArgumentNullException.ThrowIfNull(builder);
@@ -81,8 +81,8 @@ public static class PulumiAzureEnvironmentExtensions
     /// <summary>Configures an existing Container Apps managed environment to use instead of creating one.</summary>
     /// <param name="builder">The resource builder.</param>
     /// <param name="managedEnvironmentName">The existing managed environment name.</param>
-    public static IResourceBuilder<PulumiAzureEnvironmentResource> WithManagedEnvironment(
-        this IResourceBuilder<PulumiAzureEnvironmentResource> builder,
+    public static IResourceBuilder<PulumiAzureContainerAppEnvironmentResource> WithManagedEnvironment(
+        this IResourceBuilder<PulumiAzureContainerAppEnvironmentResource> builder,
         string managedEnvironmentName)
     {
         ArgumentNullException.ThrowIfNull(builder);

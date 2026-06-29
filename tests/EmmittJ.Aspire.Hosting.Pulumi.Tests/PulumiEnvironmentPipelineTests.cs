@@ -5,7 +5,7 @@
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Pipelines;
-using EmmittJ.Aspire.Hosting.Pulumi.Azure;
+using EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -47,7 +47,7 @@ public class PulumiEnvironmentPipelineTests
     public async Task RegistryResource_HasProvisionAndDestroySteps()
     {
         var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
-        var environment = builder.AddPulumiAzureEnvironment("dev");
+        var environment = builder.AddPulumiAzureContainerAppEnvironment("dev");
 
         using var app = builder.Build();
         var model = app.Services.GetRequiredService<DistributedApplicationModel>();
@@ -85,7 +85,7 @@ public class PulumiEnvironmentPipelineTests
     {
         // Publish mode is required for the environment (and registry) to be added to the model.
         var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
-        var environment = builder.AddPulumiAzureEnvironment(name);
+        var environment = builder.AddPulumiAzureContainerAppEnvironment(name);
 
         using var app = builder.Build();
         var model = app.Services.GetRequiredService<DistributedApplicationModel>();

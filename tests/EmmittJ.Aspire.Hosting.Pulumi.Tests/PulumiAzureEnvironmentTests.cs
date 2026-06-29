@@ -2,7 +2,7 @@
 
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
-using EmmittJ.Aspire.Hosting.Pulumi.Azure;
+using EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -13,7 +13,7 @@ public class PulumiAzureEnvironmentTests
     [Fact]
     public void DefaultLocation_IsEastUs()
     {
-        var resource = new PulumiAzureEnvironmentResource("test");
+        var resource = new PulumiAzureContainerAppEnvironmentResource("test");
 
         Assert.Equal("eastus", resource.Location);
     }
@@ -21,7 +21,7 @@ public class PulumiAzureEnvironmentTests
     [Fact]
     public void Location_FlowsToRegistry()
     {
-        var resource = new PulumiAzureEnvironmentResource("test");
+        var resource = new PulumiAzureContainerAppEnvironmentResource("test");
 
         resource.Location = "westus2";
 
@@ -34,13 +34,13 @@ public class PulumiAzureEnvironmentTests
     {
         var builder = DistributedApplication.CreateBuilder();
 
-        builder.AddPulumiAzureEnvironment("dev");
+        builder.AddPulumiAzureContainerAppEnvironment("dev");
 
         using var app = builder.Build();
         var model = app.Services.GetRequiredService<DistributedApplicationModel>();
 
         // The environment and its registry must not appear in the run-mode model (no dashboard leak).
-        Assert.Empty(model.Resources.OfType<PulumiAzureEnvironmentResource>());
+        Assert.Empty(model.Resources.OfType<PulumiAzureContainerAppEnvironmentResource>());
         Assert.Empty(model.Resources.OfType<PulumiAzureContainerRegistryResource>());
     }
 

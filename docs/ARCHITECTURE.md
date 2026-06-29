@@ -9,7 +9,7 @@ Pulumi Aspire deploys Aspire compute resources to the cloud using Pulumi's [Auto
 | Package | Responsibility |
 | --- | --- |
 | `EmmittJ.Aspire.Hosting.Pulumi` | Provider-agnostic core: the compute-environment base class, deployment-target resource, value/secret resolver, container-registry base, output references, and the Automation API runner. |
-| `EmmittJ.Aspire.Hosting.Pulumi.Azure` | Azure Container Apps provider: translates compute resources to `ContainerApp` resources and provisions the supporting Azure infrastructure. |
+| `EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers` | Azure Container Apps provider: translates compute resources to `ContainerApp` resources and provisions the supporting Azure infrastructure. |
 
 ## Core types
 

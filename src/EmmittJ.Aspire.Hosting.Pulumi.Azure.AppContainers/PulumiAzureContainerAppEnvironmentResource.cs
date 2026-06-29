@@ -14,7 +14,7 @@ using Pulumi.AzureNative.Authorization;
 using Pulumi.AzureNative.ManagedIdentity;
 using Pulumi.AzureNative.Resources;
 
-namespace EmmittJ.Aspire.Hosting.Pulumi.Azure;
+namespace EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers;
 
 /// <summary>
 /// A Pulumi-managed compute environment that deploys Aspire compute resources to Azure Container Apps.
@@ -24,7 +24,7 @@ namespace EmmittJ.Aspire.Hosting.Pulumi.Azure;
 /// then the environment's Pulumi program provisions a resource group, user-assigned managed identity (granted
 /// AcrPull), a Container Apps managed environment, and a Container App per compute resource.
 /// </remarks>
-public sealed class PulumiAzureEnvironmentResource : PulumiEnvironmentResource
+public sealed class PulumiAzureContainerAppEnvironmentResource : PulumiEnvironmentResource
 {
     // Built-in "AcrPull" role definition id.
     private const string AcrPullRoleDefinitionId = "/providers/Microsoft.Authorization/roleDefinitions/7f951dda-4ed3-4680-a7ca-43fe172d538d";
@@ -35,11 +35,11 @@ public sealed class PulumiAzureEnvironmentResource : PulumiEnvironmentResource
     private UserAssignedIdentity? _managedIdentity;
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="PulumiAzureEnvironmentResource"/> class.
+    /// Initializes a new instance of the <see cref="PulumiAzureContainerAppEnvironmentResource"/> class.
     /// </summary>
     /// <param name="name">The environment resource name.</param>
     /// <param name="projectName">The Pulumi project name. Defaults to <paramref name="name"/>.</param>
-    public PulumiAzureEnvironmentResource(string name, string? projectName = null)
+    public PulumiAzureContainerAppEnvironmentResource(string name, string? projectName = null)
         : base(name, projectName)
     {
         _registry = new PulumiAzureContainerRegistryResource(
@@ -77,7 +77,7 @@ public sealed class PulumiAzureEnvironmentResource : PulumiEnvironmentResource
     {
         // Best-effort fallback host used only for endpoints whose owner is not a compute resource in this
         // environment (for example a cross-environment reference). Same-environment endpoints resolve to the
-        // managed environment's real default domain via PulumiAzureComputeResourceContext.
+        // managed environment's real default domain via PulumiAzureContainerAppContext.
         var resource = endpointReference.Resource;
         return ReferenceExpression.Create($"{resource.Name.ToLowerInvariant()}.azurecontainerapps.io");
     }
@@ -97,12 +97,12 @@ public sealed class PulumiAzureEnvironmentResource : PulumiEnvironmentResource
 
         CreateAcrPullRoleAssignment(managedIdentity);
 
-        var environmentContext = new PulumiAzureEnvironmentContext(this, context, managedEnvironment.DefaultDomain);
+        var environmentContext = new PulumiAzureContainerAppEnvironmentContext(this, context, managedEnvironment.DefaultDomain);
 
         // Phase 1: register a context for every targeted resource so endpoint mappings exist before any
         // Container App is built. This mirrors how Azure Container Apps registers all contexts during prepare
         // and then defers BuildContainerApp, ensuring cross-resource endpoint references can be resolved.
-        var targetedContexts = new List<PulumiAzureComputeResourceContext>();
+        var targetedContexts = new List<PulumiAzureContainerAppContext>();
         foreach (var compute in context.GetTargetedComputeResources())
         {
             targetedContexts.Add(environmentContext.GetOrCreateContext(compute));

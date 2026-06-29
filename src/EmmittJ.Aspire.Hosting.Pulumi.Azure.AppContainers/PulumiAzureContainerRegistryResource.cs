@@ -13,7 +13,7 @@ using Pulumi.AzureNative.Resources;
 using Pulumi.Random;
 using Task = System.Threading.Tasks.Task;
 
-namespace EmmittJ.Aspire.Hosting.Pulumi.Azure;
+namespace EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers;
 
 /// <summary>
 /// An Azure Container Registry provisioned through Pulumi as its own stack before the environment is deployed.
