@@ -38,7 +38,7 @@ public class PulumiValueResolverTests
 
         context = new PulumiPublishingContext(
             model,
-            new PulumiAzureContainerAppEnvironmentResource("dev"),
+            new PulumiAzureContainerAppEnvironmentResource("myapp"),
             executionContext,
             app.Services,
             NullLogger.Instance,

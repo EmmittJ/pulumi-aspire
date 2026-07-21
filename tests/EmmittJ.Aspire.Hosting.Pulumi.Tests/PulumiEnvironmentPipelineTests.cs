@@ -17,17 +17,17 @@ public class PulumiEnvironmentPipelineTests
     [Fact]
     public async Task EnvironmentResource_RegistersExpectedLifecycleSteps()
     {
-        var steps = await ResolveEnvironmentStepsAsync("dev");
+        var steps = await ResolveEnvironmentStepsAsync("app");
 
-        var prepare = steps.Single(s => s.Name == "pulumi-prepare-dev");
+        var prepare = steps.Single(s => s.Name == "pulumi-prepare-app");
         Assert.Contains(WellKnownPipelineSteps.ValidateComputeEnvironments, prepare.DependsOnSteps);
         Assert.Contains(WellKnownPipelineSteps.BeforeStart, prepare.RequiredBySteps);
 
-        var publish = steps.Single(s => s.Name == "pulumi-publish-dev");
+        var publish = steps.Single(s => s.Name == "pulumi-publish-app");
         Assert.Contains(WellKnownPipelineSteps.PublishPrereq, publish.DependsOnSteps);
         Assert.Contains(WellKnownPipelineSteps.Publish, publish.RequiredBySteps);
 
-        var deploy = steps.Single(s => s.Name == "pulumi-deploy-dev");
+        var deploy = steps.Single(s => s.Name == "pulumi-deploy-app");
         // Deploy must run after images are pushed so Container Apps reference real registry tags.
         Assert.Contains(WellKnownPipelineSteps.Push, deploy.DependsOnSteps);
         Assert.Contains(WellKnownPipelineSteps.Deploy, deploy.RequiredBySteps);
@@ -36,9 +36,9 @@ public class PulumiEnvironmentPipelineTests
     [Fact]
     public async Task EnvironmentResource_DestroyStep_DependsOnDestroyPrereq()
     {
-        var steps = await ResolveEnvironmentStepsAsync("dev");
+        var steps = await ResolveEnvironmentStepsAsync("app");
 
-        var destroy = steps.Single(s => s.Name == "pulumi-destroy-dev");
+        var destroy = steps.Single(s => s.Name == "pulumi-destroy-app");
         Assert.Contains(WellKnownPipelineSteps.DestroyPrereq, destroy.DependsOnSteps);
         Assert.Contains(WellKnownPipelineSteps.Destroy, destroy.RequiredBySteps);
     }
@@ -47,7 +47,7 @@ public class PulumiEnvironmentPipelineTests
     public async Task RegistryResource_HasProvisionAndDestroySteps()
     {
         var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
-        var environment = builder.AddPulumiAzureContainerAppEnvironment("dev");
+        var environment = builder.AddPulumiAzureContainerAppEnvironment("app");
 
         using var app = builder.Build();
         var model = app.Services.GetRequiredService<DistributedApplicationModel>();

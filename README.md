@@ -50,9 +50,10 @@ dotnet add package EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers
 var builder = DistributedApplication.CreateBuilder(args);
 
 // Add Pulumi Azure Container Apps environment
-// "dev" = environment name (becomes part of stack name)
-// "my-app" = project name (groups stacks in Pulumi console)
-var azure = builder.AddPulumiAzureContainerAppEnvironment("dev", "my-app")
+// "my-app" = resource name, used as the Pulumi project name.
+// The Pulumi stack is the deployment environment (dev/staging/prod), selected at deploy time
+// with `aspire deploy --environment <name>`.
+var azure = builder.AddPulumiAzureContainerAppEnvironment("my-app")
     .WithLocation("eastus");
 
 // Add your resources
@@ -116,10 +117,30 @@ builder.AddContainer("api", "myimage")
 ### Multiple Environments
 
 ```csharp
-// Each environment creates a separate Pulumi stack
-builder.AddPulumiAzureContainerAppEnvironment("dev", "my-app");    // Stack: my-app/my-app-dev
-builder.AddPulumiAzureContainerAppEnvironment("staging", "my-app"); // Stack: my-app/my-app-staging
-builder.AddPulumiAzureContainerAppEnvironment("prod", "my-app");    // Stack: my-app/my-app-prod
+// One environment resource deploys to many Pulumi stacks. The stack is the Aspire deployment
+// environment, selected at deploy time — you do NOT register one resource per environment.
+var azure = builder.AddPulumiAzureContainerAppEnvironment("my-app");
+```
+
+```bash
+aspire deploy --environment dev      # Pulumi stack: my-app/dev
+aspire deploy --environment staging  # Pulumi stack: my-app/staging
+aspire deploy --environment prod      # Pulumi stack: my-app/prod
+```
+
+> The environment name maps to the Pulumi stack (precedence: `--environment` > `DOTNET_ENVIRONMENT` >
+> `ASPIRE_ENVIRONMENT`), matching how Aspire partitions deployment state per environment. Project and stack
+> names may only contain alphanumeric characters, hyphens, underscores, or periods (per
+> [Pulumi's naming rules](https://www.pulumi.com/docs/iac/concepts/stacks/)). Azure physical resource names are
+> prefixed with `{project}-{stack}` so two projects deploying the same environment do not collide. The container
+> registry is provisioned as a sibling stack named `{stack}-registry` in the same project.
+
+To decouple the Pulumi stack from the Aspire environment name, override it explicitly with `WithStackName`:
+
+```csharp
+// Deploy always targets the "prod-eu" stack regardless of --environment.
+builder.AddPulumiAzureContainerAppEnvironment("my-app")
+    .WithStackName("prod-eu");
 ```
 
 ## 🗺️ Potential follow-ups

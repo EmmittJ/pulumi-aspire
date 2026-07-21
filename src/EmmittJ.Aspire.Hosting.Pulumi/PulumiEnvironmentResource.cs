@@ -9,6 +9,7 @@
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Pipelines;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Pulumi.Automation;
 
@@ -43,13 +44,17 @@ public abstract class PulumiEnvironmentResource : Resource, IComputeEnvironmentR
     /// <summary>
     /// Initializes a new instance of the <see cref="PulumiEnvironmentResource"/> class.
     /// </summary>
-    /// <param name="name">The environment resource name. Used as the default Pulumi stack name.</param>
+    /// <param name="name">The environment resource name. Used as the default Pulumi project name.</param>
     /// <param name="projectName">The Pulumi project name that groups stacks. Defaults to <paramref name="name"/>.</param>
     protected PulumiEnvironmentResource(string name, string? projectName = null)
         : base(name)
     {
-        PulumiProjectName = projectName ?? name;
-        StackName = name;
+        // The Aspire resource name is the Pulumi project by default. The Pulumi STACK is not baked in here:
+        // it maps to the Aspire deployment environment (dev/staging/prod) and is resolved at deploy time from
+        // IHostEnvironment, mirroring how Aspire itself partitions deployment state per environment
+        // (see DistributedApplicationBuilder.LoadDeploymentState). Validate the project name up front so an
+        // invalid value surfaces a clear error at AppHost build time rather than a cryptic Automation API failure.
+        PulumiProjectName = PulumiNaming.ValidateName(projectName ?? name, nameof(projectName));
 
         Annotations.Add(new PipelineStepAnnotation(CreatePipelineStepsAsync));
         Annotations.Add(new PipelineConfigurationAnnotation(ConfigurePipeline));
@@ -58,8 +63,45 @@ public abstract class PulumiEnvironmentResource : Resource, IComputeEnvironmentR
     /// <summary>Gets or sets the Pulumi project name that groups stacks in the Pulumi console.</summary>
     public string PulumiProjectName { get; set; }
 
-    /// <summary>Gets or sets the Pulumi stack name.</summary>
-    public string StackName { get; set; }
+    private string? _resolvedStackName;
+
+    /// <summary>
+    /// Gets or sets an explicit Pulumi stack name that overrides the deploy-time Aspire environment default.
+    /// When <see langword="null"/> (the default), the stack is the Aspire environment name selected with
+    /// <c>aspire deploy --environment &lt;name&gt;</c>. Set via <c>WithStackName</c>.
+    /// </summary>
+    public string? StackNameOverride { get; set; }
+
+    /// <summary>
+    /// Gets the Pulumi stack name, resolved at deploy time. When <see cref="StackNameOverride"/> is set it wins;
+    /// otherwise the stack is the Aspire environment name (for example <c>dev</c>, <c>staging</c>, <c>prod</c>)
+    /// selected with <c>aspire deploy --environment &lt;name&gt;</c> (precedence: <c>--environment</c> &gt;
+    /// <c>DOTNET_ENVIRONMENT</c> &gt; <c>ASPIRE_ENVIRONMENT</c>), matching Pulumi's stack-per-environment model.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Thrown when accessed before the stack name is resolved at deploy time.</exception>
+    public string StackName => _resolvedStackName
+        ?? throw new InvalidOperationException("The Pulumi stack name is resolved at deploy time from the Aspire environment name.");
+
+    /// <summary>
+    /// Resolves and caches the Pulumi stack name. Uses <see cref="StackNameOverride"/> when set, otherwise the
+    /// Aspire environment (<see cref="IHostEnvironment"/>). The environment name maps to the Pulumi stack, so
+    /// <c>--environment prod</c> deploys the <c>prod</c> stack.
+    /// </summary>
+    /// <param name="services">The deploy-time service provider.</param>
+    /// <returns>The validated, lower-cased stack name.</returns>
+    internal string ResolveStackName(IServiceProvider services)
+    {
+        if (_resolvedStackName is not null)
+        {
+            return _resolvedStackName;
+        }
+
+        var (raw, paramName) = StackNameOverride is { } overridden
+            ? (overridden, nameof(StackNameOverride))
+            : (services.GetRequiredService<IHostEnvironment>().EnvironmentName.ToLowerInvariant(), "environment");
+
+        return _resolvedStackName = PulumiNaming.ValidateName(raw, paramName);
+    }
 
     /// <summary>Gets or sets the working directory for Pulumi operations. When unset, a per-project temp directory is used.</summary>
     public string? WorkingDirectory { get; set; }
@@ -217,6 +259,10 @@ public abstract class PulumiEnvironmentResource : Resource, IComputeEnvironmentR
         var logger = context.Services.GetRequiredService<ILoggerFactory>().CreateLogger<PulumiEnvironmentResource>();
         var runner = context.Services.GetRequiredService<PulumiRunner>();
 
+        // Resolve the stack (Aspire environment) before the program runs so physical resource names built in
+        // CreateStackResourcesAsync read the same value.
+        var stackName = ResolveStackName(context.Services);
+
         var task = await context.ReportingStep.CreateTaskAsync(
             $"Generating Pulumi preview for **{Name}**", context.CancellationToken).ConfigureAwait(false);
 
@@ -224,7 +270,7 @@ public abstract class PulumiEnvironmentResource : Resource, IComputeEnvironmentR
         {
             try
             {
-                var result = await runner.ForStack(PulumiProjectName, StackName)
+                var result = await runner.ForStack(PulumiProjectName, stackName)
                     .WithWorkDir(WorkingDirectory)
                     .WithConfiguration((stack, _) => ConfigureStackAsync(stack, context))
                     .PreviewAsync(() => RunProgramAsync(context, logger), context.CancellationToken)
@@ -253,6 +299,8 @@ public abstract class PulumiEnvironmentResource : Resource, IComputeEnvironmentR
         var logger = context.Services.GetRequiredService<ILoggerFactory>().CreateLogger<PulumiEnvironmentResource>();
         var runner = context.Services.GetRequiredService<PulumiRunner>();
 
+        var stackName = ResolveStackName(context.Services);
+
         var task = await context.ReportingStep.CreateTaskAsync(
             $"Deploying **{Name}** with the Pulumi Automation API", context.CancellationToken).ConfigureAwait(false);
 
@@ -260,7 +308,7 @@ public abstract class PulumiEnvironmentResource : Resource, IComputeEnvironmentR
         {
             try
             {
-                var result = await runner.ForStack(PulumiProjectName, StackName)
+                var result = await runner.ForStack(PulumiProjectName, stackName)
                     .WithWorkDir(WorkingDirectory)
                     .WithConfiguration((stack, _) => ConfigureStackAsync(stack, context))
                     .UpAsync(() => RunProgramAsync(context, logger), context.CancellationToken)
@@ -287,6 +335,8 @@ public abstract class PulumiEnvironmentResource : Resource, IComputeEnvironmentR
     {
         var logger = context.Services.GetRequiredService<ILoggerFactory>().CreateLogger<PulumiEnvironmentResource>();
         var runner = context.Services.GetRequiredService<PulumiRunner>();
+
+        var stackName = ResolveStackName(context.Services);
 
         var task = await context.ReportingStep.CreateTaskAsync(
             $"Destroying resources in **{Name}**", context.CancellationToken).ConfigureAwait(false);

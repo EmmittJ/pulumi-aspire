@@ -20,6 +20,7 @@ namespace EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers;
 /// </summary>
 public sealed class PulumiAzureContainerRegistryResource : PulumiContainerRegistryResource
 {
+    private readonly Func<IServiceProvider, string> _stackNameResolver;
     private string? _resolvedResourceGroupName;
 
     /// <summary>
@@ -27,13 +28,17 @@ public sealed class PulumiAzureContainerRegistryResource : PulumiContainerRegist
     /// </summary>
     /// <param name="name">The registry resource name.</param>
     /// <param name="pulumiProjectName">The Pulumi project name that groups stacks.</param>
-    /// <param name="stackName">The Pulumi stack name used to provision the registry.</param>
+    /// <param name="stackNameResolver">Resolves the registry stack name at deploy time (typically the environment stack plus a <c>-registry</c> suffix).</param>
     /// <param name="location">The Azure region for the registry.</param>
-    public PulumiAzureContainerRegistryResource(string name, string pulumiProjectName, string stackName, string location)
+    public PulumiAzureContainerRegistryResource(
+        string name,
+        string pulumiProjectName,
+        Func<IServiceProvider, string> stackNameResolver,
+        string location)
         : base(name)
     {
         PulumiProjectName = pulumiProjectName;
-        StackName = stackName;
+        _stackNameResolver = stackNameResolver ?? throw new ArgumentNullException(nameof(stackNameResolver));
         Location = location;
 
         // Default to Azure CLI authentication; users can override LoginCallback.
@@ -43,13 +48,23 @@ public sealed class PulumiAzureContainerRegistryResource : PulumiContainerRegist
     /// <inheritdoc />
     public override string PulumiProjectName { get; }
 
+    private string? _resolvedStackName;
+
     /// <inheritdoc />
-    public override string StackName { get; }
+    public override string StackName => _resolvedStackName
+        ?? throw new InvalidOperationException("The registry stack name is resolved at deploy time from the environment stack.");
+
+    // The registry is its own Pulumi stack, derived from the environment's stack (e.g. "{env-stack}-registry"),
+    // resolved at deploy time so it tracks the same environment/override selection as the main stack.
+    private string ResolveStackName(IServiceProvider services)
+    {
+        return _resolvedStackName ??= PulumiNaming.ValidateName(_stackNameResolver(services), "stackName");
+    }
 
     /// <summary>Gets or sets the Azure region for the container registry.</summary>
     public string Location { get; set; }
 
-    /// <summary>Gets or sets the resource group name. Defaults to <c>{StackName}-rg</c>.</summary>
+    /// <summary>Gets or sets the resource group name. Defaults to <c>{project}-{stack}-rg</c>.</summary>
     public string? ResourceGroupName { get; set; }
 
     /// <summary>Gets or sets the container registry SKU.</summary>
@@ -67,9 +82,10 @@ public sealed class PulumiAzureContainerRegistryResource : PulumiContainerRegist
         var runner = context.Services.GetRequiredService<PulumiRunner>();
         var logger = context.Services.GetRequiredService<ILoggerFactory>().CreateLogger<PulumiAzureContainerRegistryResource>();
 
-        logger.LogInformation("Provisioning Azure Container Registry stack '{StackName}'...", StackName);
+        var stackName = ResolveStackName(context.Services);
+        logger.LogInformation("Provisioning Azure Container Registry stack '{StackName}'...", stackName);
 
-        var result = await runner.ForStack(PulumiProjectName, StackName)
+        var result = await runner.ForStack(PulumiProjectName, stackName)
             .WithWorkDir(WorkingDirectory)
             .WithConfiguration(ConfigureRegistryStackAsync)
             .UpAsync(CreateRegistryProgram, context.CancellationToken)
@@ -101,9 +117,10 @@ public sealed class PulumiAzureContainerRegistryResource : PulumiContainerRegist
         var runner = context.Services.GetRequiredService<PulumiRunner>();
         var logger = context.Services.GetRequiredService<ILoggerFactory>().CreateLogger<PulumiAzureContainerRegistryResource>();
 
-        logger.LogInformation("Destroying Azure Container Registry stack '{StackName}'...", StackName);
+        var stackName = ResolveStackName(context.Services);
+        logger.LogInformation("Destroying Azure Container Registry stack '{StackName}'...", stackName);
 
-        await runner.ForStack(PulumiProjectName, StackName)
+        await runner.ForStack(PulumiProjectName, stackName)
             .WithWorkDir(WorkingDirectory)
             .WithConfiguration(ConfigureRegistryStackAsync)
             .DestroyAsync(CreateRegistryProgram, context.CancellationToken)
@@ -112,7 +129,7 @@ public sealed class PulumiAzureContainerRegistryResource : PulumiContainerRegist
 
     private Task<IDictionary<string, object?>> CreateRegistryProgram()
     {
-        var resourceGroupName = ResourceGroupName ?? $"{StackName}-rg";
+        var resourceGroupName = ResourceGroupName ?? $"{PulumiProjectName}-{StackName}-rg";
         var resourceGroup = new ResourceGroup(resourceGroupName, new ResourceGroupArgs
         {
             ResourceGroupName = resourceGroupName,

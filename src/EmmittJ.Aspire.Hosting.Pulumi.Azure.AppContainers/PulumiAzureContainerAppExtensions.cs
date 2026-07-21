@@ -20,12 +20,14 @@ public static class PulumiAzureContainerAppExtensions
     /// Adds a Pulumi Azure environment that deploys compute resources to Azure Container Apps.
     /// </summary>
     /// <param name="builder">The distributed application builder.</param>
-    /// <param name="name">The environment name (used as the Pulumi stack name).</param>
+    /// <param name="name">The environment resource name, used as the Pulumi project name.</param>
     /// <param name="projectName">The Pulumi project name that groups stacks. Defaults to <paramref name="name"/>.</param>
     /// <returns>A resource builder for further configuration.</returns>
     /// <remarks>
-    /// The environment and its container registry are only added to the model in publish mode, so they never
-    /// appear as resources during <c>aspire run</c>.
+    /// The Pulumi stack (the Aspire deployment environment such as <c>dev</c>/<c>staging</c>/<c>prod</c>) is
+    /// selected at deploy time with <c>aspire deploy --environment &lt;name&gt;</c>; a single environment resource
+    /// therefore deploys to any number of stacks. The environment and its container registry are only added to the
+    /// model in publish mode, so they never appear as resources during <c>aspire run</c>.
     /// </remarks>
     public static IResourceBuilder<PulumiAzureContainerAppEnvironmentResource> AddPulumiAzureContainerAppEnvironment(
         this IDistributedApplicationBuilder builder,

@@ -37,15 +37,21 @@ public sealed class PulumiAzureContainerAppEnvironmentResource : PulumiEnvironme
     /// <summary>
     /// Initializes a new instance of the <see cref="PulumiAzureContainerAppEnvironmentResource"/> class.
     /// </summary>
-    /// <param name="name">The environment resource name.</param>
+    /// <param name="name">The environment resource name. Used as the default Pulumi project name.</param>
     /// <param name="projectName">The Pulumi project name. Defaults to <paramref name="name"/>.</param>
+    /// <remarks>
+    /// The Pulumi stack (the Aspire deployment environment such as <c>dev</c>/<c>staging</c>/<c>prod</c>) is
+    /// resolved at deploy time. Azure physical resource names are prefixed with <c>{project}-{stack}</c> so two
+    /// projects deploying the same environment do not collide on resource group or managed environment names.
+    /// </remarks>
     public PulumiAzureContainerAppEnvironmentResource(string name, string? projectName = null)
         : base(name, projectName)
     {
         _registry = new PulumiAzureContainerRegistryResource(
             $"{name}-registry",
             pulumiProjectName: PulumiProjectName,
-            stackName: $"{StackName}-registry",
+            // The registry stack tracks the environment stack (default or WithStackName override) plus a suffix.
+            stackNameResolver: services => $"{ResolveStackName(services)}-registry",
             location: "eastus");
     }
 
@@ -118,6 +124,13 @@ public sealed class PulumiAzureContainerAppEnvironmentResource : PulumiEnvironme
         context.AddOutput("managedEnvironmentName", managedEnvironment.Name);
     }
 
+    // {project}-{env} is the Pulumi stack name (and Aspire resource name). Validate each part against Pulumi's
+    // naming rules before composing so an invalid project or environment surfaces a clear error attributed to
+    // the right argument, rather than failing later inside the Automation API.
+    // {project}-{stack} prefixes every physical Azure name (resolved at deploy time inside the Pulumi program)
+    // so two projects deploying the same environment do not collide on resource group / managed environment names.
+    private string PhysicalPrefix => $"{PulumiProjectName}-{StackName}";
+
     private ResourceGroup GetOrCreateResourceGroup()
     {
         if (_resourceGroup is not null)
@@ -125,7 +138,7 @@ public sealed class PulumiAzureContainerAppEnvironmentResource : PulumiEnvironme
             return _resourceGroup;
         }
 
-        var resourceGroupName = ResourceGroupName ?? $"{StackName}-rg";
+        var resourceGroupName = ResourceGroupName ?? $"{PhysicalPrefix}-rg";
         _resourceGroup = new ResourceGroup(resourceGroupName, new ResourceGroupArgs
         {
             ResourceGroupName = resourceGroupName,
@@ -142,7 +155,7 @@ public sealed class PulumiAzureContainerAppEnvironmentResource : PulumiEnvironme
             return _managedIdentity;
         }
 
-        var identityName = $"{StackName}-identity";
+        var identityName = $"{PhysicalPrefix}-identity";
         _managedIdentity = new UserAssignedIdentity(identityName, new UserAssignedIdentityArgs
         {
             ResourceName = identityName,
@@ -160,7 +173,7 @@ public sealed class PulumiAzureContainerAppEnvironmentResource : PulumiEnvironme
             return _managedEnvironment;
         }
 
-        var envName = ManagedEnvironmentName ?? $"{StackName}-env";
+        var envName = ManagedEnvironmentName ?? $"{PhysicalPrefix}-env";
         _managedEnvironment = new ManagedEnvironment(envName, new ManagedEnvironmentArgs
         {
             EnvironmentName = envName,
@@ -193,7 +206,7 @@ public sealed class PulumiAzureContainerAppEnvironmentResource : PulumiEnvironme
         var scope = subscriptionId.Apply(sub =>
             $"/subscriptions/{sub}/resourceGroups/{registryResourceGroup}/providers/Microsoft.ContainerRegistry/registries/{_registry.ResolvedName}");
 
-        _ = new RoleAssignment($"{StackName}-acr-pull", new RoleAssignmentArgs
+        _ = new RoleAssignment($"{PhysicalPrefix}-acr-pull", new RoleAssignmentArgs
         {
             PrincipalId = managedIdentity.PrincipalId,
             PrincipalType = "ServicePrincipal",
