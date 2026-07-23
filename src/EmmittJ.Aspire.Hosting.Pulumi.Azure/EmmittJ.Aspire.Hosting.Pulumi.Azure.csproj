@@ -1,9 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <PackageId>EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers</PackageId>
-    <Description>Azure Container Apps provider for the Pulumi-Aspire integration - deploys Aspire compute resources to Azure Container Apps using Pulumi.</Description>
-    <PackageTags>aspire;pulumi;azure;container-apps;iac;infrastructure;cloud</PackageTags>
+    <PackageId>EmmittJ.Aspire.Hosting.Pulumi.Azure</PackageId>
+    <Description>Shared Azure infrastructure primitives for the Pulumi-Aspire integration - container registry and common Azure resources used by the Azure compute providers.</Description>
+    <PackageTags>aspire;pulumi;azure;iac;infrastructure;cloud</PackageTags>
     <IsPackable>true</IsPackable>
     <!-- These Aspire pipeline/compute/registry APIs are still marked [Experimental]; the integration depends on them by design. -->
     <NoWarn>$(NoWarn);ASPIREPIPELINES001;ASPIREPIPELINES003;ASPIREPIPELINES004;ASPIRECOMPUTE001;ASPIRECOMPUTE002;ASPIRECOMPUTE003</NoWarn>
@@ -11,7 +11,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\EmmittJ.Aspire.Hosting.Pulumi\EmmittJ.Aspire.Hosting.Pulumi.csproj" />
-    <ProjectReference Include="..\EmmittJ.Aspire.Hosting.Pulumi.Azure\EmmittJ.Aspire.Hosting.Pulumi.Azure.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -20,6 +19,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers" />
+    <InternalsVisibleTo Include="EmmittJ.Aspire.Hosting.Pulumi.Azure.AppService" />
     <InternalsVisibleTo Include="EmmittJ.Aspire.Hosting.Pulumi.Tests" />
   </ItemGroup>
 

@@ -15,7 +15,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="EmmittJ.Aspire.Hosting.Pulumi.Azure" />
     <InternalsVisibleTo Include="EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers" />
+    <InternalsVisibleTo Include="EmmittJ.Aspire.Hosting.Pulumi.Azure.AppService" />
     <InternalsVisibleTo Include="EmmittJ.Aspire.Hosting.Pulumi.Tests" />
   </ItemGroup>
 

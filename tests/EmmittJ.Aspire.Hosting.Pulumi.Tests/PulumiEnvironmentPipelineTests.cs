@@ -5,6 +5,7 @@
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Pipelines;
+using EmmittJ.Aspire.Hosting.Pulumi.Azure;
 using EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -81,6 +82,23 @@ public class PulumiEnvironmentPipelineTests
         Assert.Contains(WellKnownPipelineSteps.Destroy, destroy.RequiredBySteps);
     }
 
+    [Fact]
+    public async Task AppServiceEnvironmentResource_RegistersExpectedLifecycleSteps()
+    {
+        // The lifecycle steps come from the shared PulumiEnvironmentResource base, so every provider must
+        // register the same prepare/publish/deploy/destroy shape. Guard that with the App Service provider.
+        var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
+        var environment = builder.AddPulumiAzureAppServiceEnvironment("app");
+
+        using var app = builder.Build();
+        var steps = await ResolveStepsAsync(app, environment.Resource);
+
+        Assert.Contains(steps, s => s.Name == "pulumi-prepare-app");
+        Assert.Contains(steps, s => s.Name == "pulumi-publish-app");
+        Assert.Contains(steps, s => s.Name == "pulumi-deploy-app");
+        Assert.Contains(steps, s => s.Name == "pulumi-destroy-app");
+    }
+
     private static async Task<List<PipelineStep>> ResolveEnvironmentStepsAsync(string name)
     {
         // Publish mode is required for the environment (and registry) to be added to the model.
@@ -88,6 +106,11 @@ public class PulumiEnvironmentPipelineTests
         var environment = builder.AddPulumiAzureContainerAppEnvironment(name);
 
         using var app = builder.Build();
+        return await ResolveStepsAsync(app, environment.Resource);
+    }
+
+    private static async Task<List<PipelineStep>> ResolveStepsAsync(DistributedApplication app, IResource resource)
+    {
         var model = app.Services.GetRequiredService<DistributedApplicationModel>();
         var executionContext = app.Services.GetRequiredService<DistributedApplicationExecutionContext>();
         Assert.True(executionContext.IsPublishMode);
@@ -102,10 +125,10 @@ public class PulumiEnvironmentPipelineTests
         var factoryContext = new PipelineStepFactoryContext
         {
             PipelineContext = pipelineContext,
-            Resource = environment.Resource,
+            Resource = resource,
         };
 
-        var annotation = environment.Resource.Annotations.OfType<PipelineStepAnnotation>().Single();
+        var annotation = resource.Annotations.OfType<PipelineStepAnnotation>().Single();
         var steps = await annotation.CreateStepsAsync(factoryContext);
         return [.. steps];
     }

@@ -9,7 +9,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\EmmittJ.Aspire.Hosting.Pulumi\EmmittJ.Aspire.Hosting.Pulumi.csproj" />
+    <ProjectReference Include="..\..\src\EmmittJ.Aspire.Hosting.Pulumi.Azure\EmmittJ.Aspire.Hosting.Pulumi.Azure.csproj" />
     <ProjectReference Include="..\..\src\EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers\EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers.csproj" />
+    <ProjectReference Include="..\..\src\EmmittJ.Aspire.Hosting.Pulumi.Azure.AppService\EmmittJ.Aspire.Hosting.Pulumi.Azure.AppService.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -23,7 +23,9 @@ It currently focuses on:
 | Package | Description | Status |
 |---------|-------------|--------|
 | `EmmittJ.Aspire.Hosting.Pulumi` | Core abstractions, lifecycle hooks, and Pulumi Automation API integration | Not yet published |
+| `EmmittJ.Aspire.Hosting.Pulumi.Azure` | Shared Azure infrastructure primitives (container registry) used by the Azure providers | Not yet published |
 | `EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers` | Azure Container Apps provider for compute and resource translation | Not yet published |
+| `EmmittJ.Aspire.Hosting.Pulumi.Azure.AppService` | Azure App Service provider for compute and resource translation | Not yet published |
 
 ## 🚀 Getting Started
 
@@ -40,6 +42,12 @@ Add the Pulumi Azure Container Apps package to your AppHost project:
 
 ```bash
 dotnet add package EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers
+```
+
+Or the Azure App Service package:
+
+```bash
+dotnet add package EmmittJ.Aspire.Hosting.Pulumi.Azure.AppService
 ```
 
 ### Quick Start
@@ -114,6 +122,30 @@ builder.AddContainer("api", "myimage")
     });
 ```
 
+### Azure App Service
+
+Deploy to Azure App Service instead of Container Apps. Each compute resource becomes a Linux Web App
+(single container pulled from the environment's registry with a managed identity) hosted on one shared
+App Service plan:
+
+```csharp
+var azure = builder.AddPulumiAzureAppServiceEnvironment("my-app")
+    .WithLocation("eastus")                 // Azure region
+    .WithResourceGroup("my-existing-rg")    // Use existing resource group
+    .WithPlanSku("P1v3", "Premium0V3")      // App Service plan SKU (default: P0v3)
+    .WithHttpsUpgrade(false);               // Keep declared HTTP endpoints (default: upgrade to HTTPS)
+
+builder.AddContainer("api", "myimage")
+    .PublishAsPulumiAppServiceWebsite((webApp, context) =>
+    {
+        // Customize the Azure Web App resource
+    });
+```
+
+> App Service serves HTTP(S) only, routes all traffic for a site to a single container port, and hosts
+> every endpoint on the public `{app}-{suffix}.azurewebsites.net` hostname (the suffix keeps the global
+> DNS name unique and stable across re-deploys of the same stack).
+
 ### Multiple Environments
 
 ```csharp
@@ -145,10 +177,10 @@ builder.AddPulumiAzureContainerAppEnvironment("my-app")
 
 ## 🗺️ Potential follow-ups
 
-The current implementation focuses on Azure Container Apps. Possible future work includes:
+The current implementation focuses on Azure Container Apps and Azure App Service. Possible future work includes:
 
 - 🔨 Additional resource translations for data services and other Aspire compute patterns
-- 📋 Additional cloud providers beyond Azure
+- 📋 Additional compute targets (e.g., Azure Kubernetes Service) and cloud providers beyond Azure
 
 ## 🧪 Samples
 

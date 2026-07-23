@@ -3,7 +3,6 @@
 #pragma warning disable ASPIREPIPELINES001 // Pipeline APIs are experimental
 
 using Aspire.Hosting.Pipelines;
-using EmmittJ.Aspire.Hosting.Pulumi;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Pulumi;
@@ -13,7 +12,7 @@ using Pulumi.AzureNative.Resources;
 using Pulumi.Random;
 using Task = System.Threading.Tasks.Task;
 
-namespace EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers;
+namespace EmmittJ.Aspire.Hosting.Pulumi.Azure;
 
 /// <summary>
 /// An Azure Container Registry provisioned through Pulumi as its own stack before the environment is deployed.
