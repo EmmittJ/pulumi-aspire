@@ -70,6 +70,10 @@ Two Aspire API facts (verified against 13.4.6) fix the seam: `PipelineStep.Actio
 - `PulumiStepSuppressionSelector` keeps the per-provider selectors **data-driven** (exact names, name prefixes, tags): `AzureContainerApps`, `Kubernetes`, and `DockerCompose` are shipped as well-known selectors. The native step names/tags are undocumented strings, so the catalogue tests in `EmmittJ.Aspire.Hosting.Pulumi.NativeAdoptionSpike.Tests` pin them — an Aspire version bump that changes them fails CI with the exact diff instead of silently deploying twice.
 - Spliced Pulumi steps must include `BeforeStart` in their dependencies (in addition to `Push`) so they never observe a half-materialized model while native prepare steps are still attaching `DeploymentTargetAnnotation`s.
 
+### Decorator and backend
+
+`PublishAsPulumi(selector, program)` (on the native environment's resource builder) is the user-facing entry point: in publish mode it applies the suppression (all resources by default, since native environments spread execution steps across implicitly added resources; a filter parameter narrows this when multiple environments coexist) and registers a `PulumiBackendResource` named `{environment}-pulumi`. In run mode it is a no-op so `aspire run` stays untouched. The backend splices `pulumi-publish/deploy/destroy-{name}` steps into the standard slots (deploy: `dependsOn push + before-start`, `requiredBy deploy`) and runs the supplied program through the Automation API; the program receives a `PulumiAdoptionContext` and walks the materialized model with `GetDeploymentTargets()` (Bicep-backed targets for ACA, service resources for Kubernetes/Compose), exporting stack outputs via `AddOutput`.
+
 ### Known seam: registry login
 
 Suppressing the ACA `login-to-acr-*` step (`RequiredBy push-prereq`) means the Pulumi backend must supply registry credentials before Aspire's push step runs — the one native behavior that is *replaced* rather than merely skipped. The existing registry pre-stack flow covers this for Pulumi-owned environments; the adoption frontend must either provision the registry in a first Pulumi phase or inject credentials resolved from Pulumi outputs.
@@ -77,7 +81,7 @@ Suppressing the ACA `login-to-acr-*` step (`RequiredBy push-prereq`) means the P
 ### Roadmap
 
 1. ✅ Suppression primitives: `NativePipelineStepAdoption` + `PulumiStepSuppressionSelector` with pinned per-provider selectors.
-2. 🔨 A generic Pulumi backend resource and a `PublishAsPulumi(...)`-style decorator that applies the suppression, splices the Pulumi deploy/destroy steps, and walks the materialized model (Bicep for ACA, deployment targets for Kubernetes/Compose).
+2. ✅ A generic Pulumi backend resource (`PulumiBackendResource`) and the `PublishAsPulumi(...)` decorator that applies the suppression, splices the Pulumi publish/deploy/destroy steps, and walks the materialized model through `PulumiAdoptionContext` (Bicep for ACA, deployment targets for Kubernetes/Compose).
 3. 🔨 The ACR-login/push-credential seam for the Azure frontend.
 
 
