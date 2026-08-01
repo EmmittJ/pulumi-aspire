@@ -74,9 +74,11 @@ Two Aspire API facts (verified against 13.4.6) fix the seam: `PipelineStep.Actio
 
 `PublishAsPulumi(selector, program)` (on the native environment's resource builder) is the user-facing entry point: in publish mode it applies the suppression (all resources by default, since native environments spread execution steps across implicitly added resources; a filter parameter narrows this when multiple environments coexist) and registers a `PulumiBackendResource` named `{environment}-pulumi`. In run mode it is a no-op so `aspire run` stays untouched. The backend splices `pulumi-publish/deploy/destroy-{name}` steps into the standard slots (deploy: `dependsOn push + before-start`, `requiredBy deploy`) and runs the supplied program through the Automation API; the program receives a `PulumiAdoptionContext` and walks the materialized model with `GetDeploymentTargets()` (Bicep-backed targets for ACA, service resources for Kubernetes/Compose), exporting stack outputs via `AddOutput`.
 
-### Known seam: registry login
+### Registry-first phase (the ACR-login/push-credential seam)
 
-Suppressing the ACA `login-to-acr-*` step (`RequiredBy push-prereq`) means the Pulumi backend must supply registry credentials before Aspire's push step runs — the one native behavior that is *replaced* rather than merely skipped. The existing registry pre-stack flow covers this for Pulumi-owned environments; the adoption frontend must either provision the registry in a first Pulumi phase or inject credentials resolved from Pulumi outputs.
+Suppressing the ACA `login-to-acr-*` step (`RequiredBy push-prereq`) means the Pulumi backend must supply a provisioned registry and Docker credentials before Aspire's push step runs — the one native behavior that is *replaced* rather than merely skipped. `PulumiRegistryPhase` (passed to `PublishAsPulumi(..., registryPhase: ...)`) resolves this: the backend splices a `pulumi-deploy-registry-{name}` step (`dependsOn before-start`, `requiredBy push-prereq`) that runs the phase's program as a Pulumi `up` against a dedicated `{project}-registry` stack, then invokes the phase's login callback for each registry the adopted environment attached to its deployment targets. A matching `pulumi-destroy-registry-{name}` step (`dependsOn` the main destroy step) tears the registry stack down after the main stack so workloads referencing registry images are gone before the registry is.
+
+For Azure, `CreateAzureRegistryPhase(options)` is the ready-made phase: its program (`TranslateAzureRegistriesAsync`) translates the registry-template closure the adopted environment attached to its deployment targets into the registry stack (defaulting to its own `{environment}-registry-rg` resource group so destroying either stack never deletes the other's resources), and its login callback runs `az acr login`. Exporting the registry outputs is load-bearing: it roots the applies that back-propagate the deployed values into the registry resource's Aspire outputs, which is what lets Aspire's push step, the login callback, and the main deploy resolve the registry name/endpoint. When a registry phase is set, `TranslateAzureEnvironmentAsync` excludes the registry templates from the main stack so the same ARM resources are never managed by two stacks — their `BicepOutputReference` parameters resolve from the back-propagated outputs instead.
 
 ### Azure adoption frontend
 
@@ -87,7 +89,8 @@ Suppressing the ACA `login-to-acr-*` step (`RequiredBy push-prereq`) means the P
 1. ✅ Suppression primitives: `NativePipelineStepAdoption` + `PulumiStepSuppressionSelector` with pinned per-provider selectors.
 2. ✅ A generic Pulumi backend resource (`PulumiBackendResource`) and the `PublishAsPulumi(...)` decorator that applies the suppression, splices the Pulumi publish/deploy/destroy steps, and walks the materialized model through `PulumiAdoptionContext` (Bicep for ACA, deployment targets for Kubernetes/Compose).
 3. ✅ The Azure adoption frontend: `TranslateAzureEnvironmentAsync` wires the Bicep→azure-native translation core into the adoption flow, pinned by mock-engine fixture tests over the real ACA provisioning model.
-4. 🔨 The ACR-login/push-credential seam for the Azure frontend.
+4. ✅ The ACR-login/push-credential seam: `PulumiRegistryPhase` + `CreateAzureRegistryPhase` provision the registry into its own stack before push and re-implement the login against Pulumi outputs.
+5. 🔨 Kubernetes and Docker Compose adoption frontends over the materialized deployment targets.
 
 
 ## References

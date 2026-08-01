@@ -121,6 +121,109 @@ public class AzureAdoptionTranslationTests
         Assert.Contains("AddAzureContainerAppEnvironment", exception.Message);
     }
 
+    [Fact]
+    public async Task TranslateAzureRegistries_TranslatesOnlyTheRegistryClosure()
+    {
+        var (app, adoption, outputPath) = await MaterializeAcaModelAsync(PulumiOperation.Up);
+        using (app)
+        {
+            var mocks = new RecordingMocks();
+            AzureTranslationContext? translation = null;
+            await Deployment.TestAsync(
+                mocks,
+                new TestOptions { IsPreview = false, ProjectName = "adoption-test-registry", StackName = "test" },
+                async () => translation = await adoption.TranslateAzureRegistriesAsync(
+                    new AzureAdoptionOptions { Location = "westus2" }));
+
+            // Only the registry closure translates: no workload or environment resources.
+            var tokens = mocks.Resources.Select(static r => r.Type).ToHashSet();
+            Assert.Contains("azure-native:resources:ResourceGroup", tokens);
+            Assert.Contains("azure-native:containerregistry:Registry", tokens);
+            Assert.DoesNotContain("azure-native:app:ManagedEnvironment", tokens);
+            Assert.DoesNotContain("azure-native:app:ContainerApp", tokens);
+
+            // The registry stack owns its own resource group so destroying either stack never deletes
+            // resources managed by the other.
+            var registry = Assert.Single(mocks.Resources, static r => r.Type == "azure-native:containerregistry:Registry");
+            Assert.Equal("aca-env-registry-rg", registry.Inputs["resourceGroupName"]);
+
+            // Every registry template output is exported — the rooting that makes back-propagation run.
+            Assert.NotNull(translation);
+            var template = Assert.Single(translation!.Templates.Values);
+            Assert.True(adoption.Outputs.ContainsKey("resourceGroupName"));
+            foreach (var name in template.Outputs.Keys)
+            {
+                Assert.True(adoption.Outputs.ContainsKey($"{template.Name}_{name}"), $"expected stack output '{template.Name}_{name}'");
+            }
+
+            CleanUp(outputPath);
+        }
+    }
+
+    [Fact]
+    public async Task TranslateAzureRegistries_WithoutRegistryModel_ThrowsActionable()
+    {
+        var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
+        var environment = builder.AddResource(new TestComputeEnvironmentResource("native-env"));
+        using var app = builder.Build();
+
+        var backend = new PulumiBackendResource("native-env-pulumi", environment.Resource, _ => Task.CompletedTask);
+        var adoption = new PulumiAdoptionContext(
+            app.Services.GetRequiredService<DistributedApplicationModel>(),
+            backend,
+            PulumiOperation.Up,
+            app.Services.GetRequiredService<DistributedApplicationExecutionContext>(),
+            app.Services,
+            NullLogger.Instance,
+            CancellationToken.None);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => adoption.TranslateAzureRegistriesAsync());
+        Assert.Contains("native-env", exception.Message);
+        Assert.Contains("registry", exception.Message);
+    }
+
+    [Fact]
+    public async Task TranslateAzureEnvironment_WithRegistryPhase_ExcludesRegistryTemplatesAndResolvesTheirOutputs()
+    {
+        var registryPhase = PulumiAzureAdoptionExtensions.CreateAzureRegistryPhase();
+        var (app, adoption, outputPath) = await MaterializeAcaModelAsync(PulumiOperation.Up, registryPhase);
+        using (app)
+        {
+            // Phase 1: the registry-first phase deploys the registry stack. Awaiting the exported outputs
+            // forces the back-propagation applies that fill the registry resource's Aspire outputs.
+            var registryMocks = new RecordingMocks();
+            await Deployment.TestAsync(
+                registryMocks,
+                new TestOptions { IsPreview = false, ProjectName = "adoption-test-registry", StackName = "test" },
+                async () => await adoption.TranslateAzureRegistriesAsync(new AzureAdoptionOptions { Location = "westus2" }));
+            foreach (var output in adoption.Outputs.Values)
+            {
+                await global::Pulumi.Utilities.OutputUtilities.GetValueAsync(output);
+            }
+
+            var registryTemplate = Assert.Single(adoption.GetContainerRegistries().OfType<AzureBicepResource>());
+            Assert.NotEmpty(registryTemplate.Outputs);
+
+            // Phase 2: the main deploy excludes the registry template the phase owns; its outputs feed the
+            // remaining templates' parameters through the back-propagated values (up mode fails fast on
+            // unresolvable parameters, so success proves the seam resolves).
+            var mocks = new RecordingMocks();
+            await Deployment.TestAsync(
+                mocks,
+                new TestOptions { IsPreview = false, ProjectName = "adoption-test", StackName = "test" },
+                async () => await adoption.TranslateAzureEnvironmentAsync(
+                    new AzureAdoptionOptions { Location = "westus2" }));
+
+            var tokens = mocks.Resources.Select(static r => r.Type).ToHashSet();
+            Assert.DoesNotContain("azure-native:containerregistry:Registry", tokens);
+            Assert.Contains("azure-native:app:ManagedEnvironment", tokens);
+            Assert.Contains("azure-native:app:ContainerApp", tokens);
+
+            CleanUp(outputPath);
+        }
+    }
+
     /// <summary>
     /// Runs the publish pipeline for an ACA environment + one container in-process so the native prepare
     /// steps attach the Bicep-backed deployment targets, then wraps the materialized model in a
@@ -129,7 +232,8 @@ public class AzureAdoptionTranslationTests
     /// no docker or Azure CLI.
     /// </summary>
     private static async Task<(DistributedApplication App, PulumiAdoptionContext Adoption, string OutputPath)> MaterializeAcaModelAsync(
-        PulumiOperation operation)
+        PulumiOperation operation,
+        PulumiRegistryPhase? registryPhase = null)
     {
         var outputPath = Path.Combine(Path.GetTempPath(), $"azure-adoption-translation-{Guid.NewGuid():N}");
         var builder = DistributedApplication.CreateBuilder(["--operation", "publish", "--output-path", outputPath]);
@@ -159,7 +263,10 @@ public class AzureAdoptionTranslationTests
         var pipeline = app.Services.GetRequiredService<IDistributedApplicationPipeline>();
         await pipeline.ExecuteAsync(new PipelineContext(model, executionContext, app.Services, NullLogger.Instance, CancellationToken.None));
 
-        var backend = new PulumiBackendResource("aca-env-pulumi", environment.Resource, _ => Task.CompletedTask);
+        var backend = new PulumiBackendResource("aca-env-pulumi", environment.Resource, _ => Task.CompletedTask)
+        {
+            RegistryPhase = registryPhase,
+        };
         var adoption = new PulumiAdoptionContext(
             model, backend, operation, executionContext, app.Services, NullLogger.Instance, CancellationToken.None);
         return (app, adoption, outputPath);

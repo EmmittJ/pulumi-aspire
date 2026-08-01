@@ -1,8 +1,10 @@
 // Licensed under the MIT License.
 
 #pragma warning disable ASPIREPIPELINES001 // Pipeline APIs are experimental
+#pragma warning disable ASPIREPIPELINES002 // Pipeline tag APIs are experimental
 #pragma warning disable ASPIRECOMPUTE001  // Compute resource APIs are experimental
 #pragma warning disable ASPIRECOMPUTE002  // IComputeEnvironmentResource is experimental
+#pragma warning disable ASPIRECOMPUTE003  // IContainerRegistry is experimental
 
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
@@ -187,6 +189,93 @@ public class PulumiNativeAdoptionTests
         Assert.Equal("prod", backend.ResolveStackName(app.Services));
     }
 
+    [Fact]
+    public async Task BackendResource_WithoutRegistryPhase_RegistersNoRegistrySteps()
+    {
+        var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
+        var environment = builder.AddResource(new TestComputeEnvironmentResource("native-env"));
+
+        environment.PublishAsPulumi(PulumiStepSuppressionSelector.DockerCompose, _ => Task.CompletedTask);
+
+        using var app = builder.Build();
+        var backend = builder.Resources.OfType<PulumiBackendResource>().Single();
+        var steps = await ResolveStepsAsync(app, backend);
+
+        Assert.DoesNotContain(steps, s => s.Name.StartsWith("pulumi-deploy-registry-", StringComparison.Ordinal));
+        Assert.DoesNotContain(steps, s => s.Name.StartsWith("pulumi-destroy-registry-", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task BackendResource_WithRegistryPhase_RegistersPinnedRegistrySteps()
+    {
+        var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
+        var environment = builder.AddResource(new TestComputeEnvironmentResource("native-env"));
+
+        environment.PublishAsPulumi(
+            PulumiStepSuppressionSelector.AzureContainerApps,
+            _ => Task.CompletedTask,
+            registryPhase: new PulumiRegistryPhase(_ => Task.CompletedTask));
+
+        using var app = builder.Build();
+        var backend = builder.Resources.OfType<PulumiBackendResource>().Single();
+        Assert.NotNull(backend.RegistryPhase);
+        Assert.Equal("native-env-pulumi-registry", backend.RegistryProjectName);
+
+        var steps = await ResolveStepsAsync(app, backend);
+
+        var deployRegistry = steps.Single(s => s.Name == "pulumi-deploy-registry-native-env-pulumi");
+        // The registry must exist (and Docker be logged in) before Aspire's push step runs; before-start
+        // guards against observing a half-materialized model while native prepare steps still run.
+        Assert.Contains(WellKnownPipelineSteps.BeforeStart, deployRegistry.DependsOnSteps);
+        Assert.Contains(WellKnownPipelineSteps.PushPrereq, deployRegistry.RequiredBySteps);
+        Assert.Contains(WellKnownPipelineTags.ProvisionInfrastructure, deployRegistry.Tags);
+
+        var destroyRegistry = steps.Single(s => s.Name == "pulumi-destroy-registry-native-env-pulumi");
+        // The registry stack is destroyed after the main stack so workloads referencing registry images
+        // are gone before the registry is.
+        Assert.Contains(WellKnownPipelineSteps.DestroyPrereq, destroyRegistry.DependsOnSteps);
+        Assert.Contains("pulumi-destroy-native-env-pulumi", destroyRegistry.DependsOnSteps);
+        Assert.Contains(WellKnownPipelineSteps.Destroy, destroyRegistry.RequiredBySteps);
+    }
+
+    [Fact]
+    public void AdoptionContext_GetContainerRegistries_ReturnsDistinctAdoptedRegistries()
+    {
+        var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
+        var environment = builder.AddResource(new TestComputeEnvironmentResource("native-env"));
+        var compute = builder.AddContainer("web", "nginx:latest");
+        var otherCompute = builder.AddContainer("api", "nginx:latest");
+
+        environment.PublishAsPulumi(PulumiStepSuppressionSelector.AzureContainerApps, _ => Task.CompletedTask);
+
+        // Simulate what the native prepare step does: two targets sharing one registry.
+        var registry = new TestContainerRegistryResource("acr");
+        compute.Resource.Annotations.Add(new DeploymentTargetAnnotation(new TestResource("web-target"))
+        {
+            ComputeEnvironment = environment.Resource,
+            ContainerRegistry = registry,
+        });
+        otherCompute.Resource.Annotations.Add(new DeploymentTargetAnnotation(new TestResource("api-target"))
+        {
+            ComputeEnvironment = environment.Resource,
+            ContainerRegistry = registry,
+        });
+
+        using var app = builder.Build();
+        var backend = builder.Resources.OfType<PulumiBackendResource>().Single();
+
+        var context = new PulumiAdoptionContext(
+            app.Services.GetRequiredService<DistributedApplicationModel>(),
+            backend,
+            PulumiOperation.Up,
+            app.Services.GetRequiredService<DistributedApplicationExecutionContext>(),
+            app.Services,
+            NullLogger.Instance,
+            CancellationToken.None);
+
+        Assert.Same(registry, Assert.Single(context.GetContainerRegistries()));
+    }
+
     private static async Task<List<PipelineStep>> ResolveStepsAsync(DistributedApplication app, IResource resource)
     {
         var pipelineContext = CreatePipelineContext(app);
@@ -220,6 +309,13 @@ public class PulumiNativeAdoptionTests
 
     /// <summary>A minimal native compute environment stand-in for adoption tests.</summary>
     private sealed class TestComputeEnvironmentResource(string name) : Resource(name), IComputeEnvironmentResource;
+
+    /// <summary>A minimal container registry stand-in for registry-phase tests.</summary>
+    private sealed class TestContainerRegistryResource(string name) : Resource(name), IContainerRegistry
+    {
+        ReferenceExpression IContainerRegistry.Name => ReferenceExpression.Create($"{Name}");
+        ReferenceExpression IContainerRegistry.Endpoint => ReferenceExpression.Create($"{Name}.example.io");
+    }
 
     private sealed class NoOpReportingStep : IReportingStep
     {
