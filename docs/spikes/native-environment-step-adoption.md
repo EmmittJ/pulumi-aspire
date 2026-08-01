@@ -1,13 +1,14 @@
 # 🔍 Spike: Native Aspire Environment Step Adoption
 
-**Status:** ✅ Go (all three environments)
+**Status:** ✅ Go (all four environments)
 **Aspire version:** 13.4.6 (`Aspire.Hosting.Kubernetes` 13.4.6-preview.1.26319.6)
 **Spike code:** `tests/EmmittJ.Aspire.Hosting.Pulumi.NativeAdoptionSpike.Tests` (the suppression mechanism has since been promoted to production as `NativePipelineStepAdoption` + `PulumiStepSuppressionSelector`; the test project remains as the pinned step catalogue and end-to-end adoption proof)
 
 ## 🎯 Question
 
 Can we reliably neutralize the deploy/destroy execution steps of Aspire's **native** compute environments
-(Azure Container Apps, Kubernetes, Docker Compose) and splice Pulumi-owned pipeline steps into the same
+(Azure Container Apps, Azure App Service, Kubernetes, Docker Compose) and splice Pulumi-owned pipeline
+steps into the same
 slots — while the native environment's prepare/publish phases still run and fully materialize the
 provisioning model we intend to walk?
 
@@ -17,10 +18,10 @@ Pulumi becomes the execution engine over the model the native environment produc
 
 ## ✅ Answer
 
-**Yes, for all three environments.** The spike executes the full Aspire pipeline in-process with every
+**Yes, for all four environments.** The spike executes the full Aspire pipeline in-process with every
 native execution step suppressed and a stub "Pulumi backend" step spliced into the deploy slot. The stub
-observes the complete provisioning model (Bicep templates and `DeploymentTargetAnnotation`s for ACA,
-deployment targets for Kubernetes and Docker Compose), and the pipeline completes cleanly.
+observes the complete provisioning model (Bicep templates and `DeploymentTargetAnnotation`s for ACA and
+App Service, deployment targets for Kubernetes and Docker Compose), and the pipeline completes cleanly.
 
 ## 📋 Step catalogue
 
@@ -45,6 +46,50 @@ login/provisioning/destroy) and an `AzureContainerRegistryResource` (ACR).
 
 Suppression selector used: tag `provision-infra`, tag `acr-login`, name prefix `destroy-azure-`, plus
 `validate-azure-login` and `create-provisioning-context` by name.
+
+### Azure App Service (`AddAzureAppServiceEnvironment`)
+
+Adding the environment adds the **same** two supporting resources as ACA: an implicit
+`AzureEnvironmentResource` and an `AzureContainerRegistryResource` (ACR). The Azure environment and
+registry rows are identical to the ACA table above, so only the environment resource's own steps are
+listed here.
+
+| Step | Owner | DependsOn | RequiredBy | Tags | Classification |
+| --- | --- | --- | --- | --- | --- |
+| `provision-{appsvcEnv}` | AzureAppServiceEnvironmentResource | `create-provisioning-context` | `provision-azure-bicep-resources` | `provision-infra` | 🔥 execution — suppress |
+| `prepare-azure-app-service-{appsvcEnv}` | AzureAppServiceEnvironmentResource | `azure-prepare-resources`, `validate-compute-environments` | `before-start` | — | 🧩 modeling — keep (creates `DeploymentTargetAnnotation`s) |
+| `validate-appservice-config-{appsvcEnv}` | AzureAppServiceEnvironmentResource | `publish-prereq` | `publish` | — | 🧩 modeling — keep (publish-slot config validation; ACA has no equivalent) |
+| `print-dashboard-url-{appsvcEnv}` | AzureAppServiceEnvironmentResource | `provision-azure-bicep-resources` | `deploy` | `print-summary` | ℹ️ cosmetic — replace with Pulumi summary |
+
+Suppression selector used: `PulumiStepSuppressionSelector.AzureAppService` — pinned independently but
+currently byte-identical to `AzureContainerApps` (same names, prefixes, and tags), because App Service
+reuses the same Azure environment and ACR plumbing. The catalogue test asserts the exact suppressed-step
+set so a future Aspire divergence between the two environments fails loudly.
+
+#### ⚠️ Why App Service could not be adopted wholesale from the ACA tests
+
+Wiring `AddAzureAppServiceEnvironment` through the existing seam mostly "just worked" (identical selector,
+identical splice slots), but a wholesale copy of the ACA adoption tests fails for two App Service-specific
+reasons — both verified against the decompiled `Aspire.Hosting.Azure.AppService` 13.4.6 sources:
+
+1. **Plain image containers are silently skipped.** `AzureAppServiceEnvironmentResource.PrepareDeploymentTargetsAsync`
+   only materializes a `DeploymentTargetAnnotation` (an `AzureAppServiceWebSiteResource`, target name
+   `{resource}-website`) for resources that are a `ProjectResource` **or** a container with a
+   `DockerfileBuildAnnotation` (`AddDockerfile`/`WithDockerfile`). The ACA tests' `AddContainer("web",
+   "nginx:latest")` shape produces **no deployment target and no error** — a Pulumi program walking
+   `GetDeploymentTargets` never sees the resource. The `PlainImageContainer_GetsNoDeploymentTarget` test
+   pins this gap so the caveat can be dropped if a future Aspire version lifts the restriction.
+2. **`push-prereq` races `prepare-azure-app-service-*` under single-DAG execution.** Because the compute
+   resource must be Dockerfile-built, it `RequiresImageBuildAndPush()`, and Aspire's built-in `push-prereq`
+   step validates that a container registry is reachable — via `ContainerRegistryReferenceAnnotation` or the
+   `DeploymentTargetAnnotation.ContainerRegistry` that `prepare-azure-app-service-*` attaches. `push-prereq`
+   has **no dependency edge onto `before-start`**, so the in-process harness (which executes the whole step
+   DAG at once) can run it before the prepare step finishes, failing with *"requires image push but no
+   container registry is available"*. This is the same class of race as the spliced-step `before-start`
+   finding below, now on an Aspire-owned step. Real `aspire deploy` is unaffected (the before-start phase
+   runs to completion first on a cloned pipeline), so the harness adds the missing
+   `before-start → push-prereq` edge explicitly via a no-op bridge step. A production backend that splices
+   its own push-affecting steps should keep carrying the explicit `before-start` edge for the same reason.
 
 ### Kubernetes (`AddKubernetesEnvironment`)
 
@@ -107,6 +152,11 @@ still running**, observing a half-materialized model. Adding `before-start` to t
   `DeploymentTargetAnnotation` whose target (`web-containerapp`, an `AzureProvisioningResource`) has its own
   Bicep with a container-image parameter. **No provisioning context, Azure login, or subscription resolution
   is needed for the model to materialize** — those live entirely in the suppressed steps.
+- **App Service**: with the same suppression set, `azure-prepare-resources`,
+  `prepare-azure-app-service-*`, and `validate-appservice-config-*` run for real and materialize the model
+  the same way ACA does (`{resource}-website` deployment targets with their own Bicep). The two caveats —
+  plain image containers get no deployment target, and `push-prereq` needs an explicit `before-start` edge
+  under single-DAG execution — are detailed in the App Service catalogue section above.
 - **Kubernetes / Compose**: `prepare-deployment-targets-*` attaches deployment targets without Helm or a
   Docker daemon; `publish-*` writes artifacts normally.
 - **Build/push ordering**: framework build steps (`build-compute` tag) schedule independently of the

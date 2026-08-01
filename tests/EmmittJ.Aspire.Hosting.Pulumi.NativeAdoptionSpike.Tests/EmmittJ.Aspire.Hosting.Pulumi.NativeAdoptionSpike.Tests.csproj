@@ -5,7 +5,7 @@
     <IsTestProject>true</IsTestProject>
     <!--
       Native-adoption tests: validate that native Aspire compute environments (Azure Container Apps,
-      Kubernetes, Docker Compose) can have their deploy/destroy pipeline steps suppressed via the production
+      Azure App Service, Kubernetes, Docker Compose) can have their deploy/destroy pipeline steps suppressed via the production
       NativePipelineStepAdoption/PulumiStepSuppressionSelector primitives and replaced by Pulumi-owned steps
       that walk the environment's produced provisioning model. The catalogue tests pin the native step
       names/tags the selectors depend on (see docs/spikes/native-environment-step-adoption.md).
