@@ -2,7 +2,6 @@
 
 #pragma warning disable ASPIREPIPELINES003 // ContainerImageReference is experimental
 
-using System.Globalization;
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using Microsoft.Extensions.Logging;
@@ -42,7 +41,14 @@ public abstract class PulumiComputeResourceContext
     {
         ComputeResource = computeResource;
         PublishingContext = publishingContext;
+        _valueResolver = new PulumiValueResolver(publishingContext.ExecutionContext, publishingContext.CancellationToken)
+        {
+            EndpointResolver = ResolveEndpoint,
+            EndpointExpressionResolver = ResolveEndpointExpression,
+        };
     }
+
+    private readonly PulumiValueResolver _valueResolver;
 
     /// <summary>Gets the source Aspire compute resource.</summary>
     public IComputeResource ComputeResource { get; }
@@ -104,101 +110,10 @@ public abstract class PulumiComputeResourceContext
 
     /// <summary>
     /// Resolves an Aspire structured value to a Pulumi <see cref="Output{T}"/>, tracking whether the value is
-    /// secret. Mirrors the value handling performed by Aspire's Azure Container Apps translator.
+    /// secret. Delegates to the shared <see cref="PulumiValueResolver"/> with this context's endpoint hooks.
     /// </summary>
     /// <param name="value">The value object from an environment variable, argument, or reference expression.</param>
-    protected async Task<PulumiResolvedValue> ResolveValueAsync(object? value)
-    {
-        switch (value)
-        {
-            case null:
-                return new(Output.Create(string.Empty), IsSecret: false);
-
-            case string s:
-                return new(Output.Create(s), IsSecret: false);
-
-            case ParameterResource parameter:
-            {
-                var resolved = await parameter.GetValueAsync(CancellationToken).ConfigureAwait(false) ?? string.Empty;
-                // Secret parameters are wrapped so Pulumi encrypts them in state rather than storing plaintext.
-                return parameter.Secret
-                    ? new(Output.CreateSecret(resolved), IsSecret: true)
-                    : new(Output.Create(resolved), IsSecret: false);
-            }
-
-            case EndpointReference endpoint:
-                return new(ResolveEndpoint(endpoint), IsSecret: false);
-
-            case EndpointReferenceExpression endpointExpression:
-                return new(ResolveEndpointExpression(endpointExpression), IsSecret: false);
-
-            case ConnectionStringReference connectionString:
-            {
-                // Connection strings frequently embed credentials; treat them as secret.
-                var resolved = await ((IValueProvider)connectionString).GetValueAsync(CancellationToken).ConfigureAwait(false) ?? string.Empty;
-                return new(Output.CreateSecret(resolved), IsSecret: true);
-            }
-
-            case IResourceWithConnectionString resourceWithConnectionString:
-            {
-                var resolved = await resourceWithConnectionString.GetValueAsync(CancellationToken).ConfigureAwait(false) ?? string.Empty;
-                return new(Output.CreateSecret(resolved), IsSecret: true);
-            }
-
-            case PulumiOutputReference outputReference:
-            {
-                // The reference resolves to its deferred string value, which the environment populates from the
-                // deployed stack outputs. Output references are not secret-bearing on their own.
-                var resolved = await outputReference.GetValueAsync(CancellationToken).ConfigureAwait(false) ?? string.Empty;
-                return new(Output.Create(resolved), IsSecret: false);
-            }
-
-            case ReferenceExpression referenceExpression:
-                return await ResolveReferenceExpressionAsync(referenceExpression).ConfigureAwait(false);
-
-            case IValueProvider valueProvider:
-            {
-                var resolved = await valueProvider.GetValueAsync(
-                    new ValueProviderContext { ExecutionContext = ExecutionContext },
-                    CancellationToken).ConfigureAwait(false) ?? string.Empty;
-                return new(Output.Create(resolved), IsSecret: false);
-            }
-
-            case IManifestExpressionProvider manifestExpression:
-                // No resolver available for a bare manifest expression here; surface its expression text.
-                return new(Output.Create(manifestExpression.ValueExpression), IsSecret: false);
-
-            default:
-                return new(Output.Create(value.ToString() ?? string.Empty), IsSecret: false);
-        }
-    }
-
-    private async Task<PulumiResolvedValue> ResolveReferenceExpressionAsync(ReferenceExpression expression)
-    {
-        // Simple single-provider passthrough keeps the underlying value's secret-ness and Output identity.
-        if (expression.Format == "{0}" && expression.ValueProviders.Count == 1)
-        {
-            return await ResolveValueAsync(expression.ValueProviders[0]).ConfigureAwait(false);
-        }
-
-        var parts = new Output<string>[expression.ValueProviders.Count];
-        var anySecret = false;
-
-        for (var i = 0; i < expression.ValueProviders.Count; i++)
-        {
-            var resolved = await ResolveValueAsync(expression.ValueProviders[i]).ConfigureAwait(false);
-            parts[i] = resolved.Value;
-            anySecret |= resolved.IsSecret;
-        }
-
-        var combined = Output.All(parts).Apply(values =>
-            string.Format(CultureInfo.InvariantCulture, expression.Format, [.. values.Cast<object>()]));
-
-        // If any constituent value was secret, the whole composite is secret.
-        return anySecret
-            ? new(Output.CreateSecret(combined), IsSecret: true)
-            : new(combined, IsSecret: false);
-    }
+    protected Task<PulumiResolvedValue> ResolveValueAsync(object? value) => _valueResolver.ResolveAsync(value);
 
     /// <summary>Collects environment variables by invoking the resource's environment callbacks.</summary>
     protected virtual async Task ProcessEnvironmentVariablesAsync()
@@ -296,8 +211,3 @@ public abstract class PulumiComputeResourceContext
     /// <param name="name">The original name.</param>
     protected static string NormalizeName(string name) => name.ToLowerInvariant().Replace("_", "-");
 }
-
-/// <summary>A resolved Pulumi value plus whether it should be treated as a secret.</summary>
-/// <param name="Value">The resolved Pulumi output.</param>
-/// <param name="IsSecret">Whether the value contains secret material.</param>
-public readonly record struct PulumiResolvedValue(Output<string> Value, bool IsSecret);

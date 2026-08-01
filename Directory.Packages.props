@@ -5,6 +5,7 @@
   <ItemGroup>
     <!-- Aspire -->
     <PackageVersion Include="Aspire.Hosting" Version="13.4.6" />
+    <PackageVersion Include="Aspire.Hosting.Azure" Version="13.4.6" />
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.4.6" />
     <PackageVersion Include="Aspire.Hosting.JavaScript" Version="13.4.6" />
     <PackageVersion Include="Aspire.Hosting.Yarp" Version="13.4.6" />
