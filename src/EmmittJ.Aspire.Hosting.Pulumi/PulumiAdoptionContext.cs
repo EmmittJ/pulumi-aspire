@@ -2,6 +2,7 @@
 
 #pragma warning disable ASPIRECOMPUTE001 // GetComputeResources / compute-resource APIs are experimental
 #pragma warning disable ASPIRECOMPUTE002 // IComputeEnvironmentResource is experimental
+#pragma warning disable ASPIRECOMPUTE003 // IContainerRegistry is experimental
 
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
@@ -94,6 +95,24 @@ public sealed class PulumiAdoptionContext
             if (compute.GetDeploymentTargetAnnotation(AdoptedEnvironment) is { } annotation)
             {
                 yield return (compute, annotation);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Enumerates the distinct container registries the adopted native environment attached to its
+    /// deployment targets (<see cref="DeploymentTargetAnnotation.ContainerRegistry"/>), in deterministic
+    /// model order. For Azure Container Apps / App Service this is the environment's implicitly added
+    /// container registry resource.
+    /// </summary>
+    public IEnumerable<IContainerRegistry> GetContainerRegistries()
+    {
+        var seen = new HashSet<IContainerRegistry>();
+        foreach (var (_, annotation) in GetDeploymentTargets())
+        {
+            if (annotation.ContainerRegistry is { } registry && seen.Add(registry))
+            {
+                yield return registry;
             }
         }
     }

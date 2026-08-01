@@ -47,6 +47,13 @@ public static class PulumiNativeAdoptionExtensions
     /// added resources (for example the Azure environment and container registry resources). Narrow this
     /// when multiple environments coexist and only one is adopted.
     /// </param>
+    /// <param name="registryPhase">
+    /// The registry-first Pulumi phase that provisions the environment's container registry (into the
+    /// dedicated <c>{project}-registry</c> stack) and authenticates Docker to it before Aspire's push step
+    /// runs. Required when the adopted environment pushes images to a registry it provisions itself (Azure
+    /// Container Apps / App Service), because the suppressed native registry login step must be replaced —
+    /// use the Azure package's <c>PulumiAzureAdoptionExtensions.CreateAzureRegistryPhase</c> for those.
+    /// </param>
     /// <returns>The same builder for chaining.</returns>
     /// <remarks>
     /// <para>
@@ -57,15 +64,15 @@ public static class PulumiNativeAdoptionExtensions
     /// <para>
     /// ⚠️ For Azure Container Apps, suppressing the <c>login-to-acr-*</c> step means the Pulumi backend must
     /// supply registry credentials before Aspire's push step runs — the one native behavior that is replaced
-    /// rather than merely skipped. Resolving that seam is up to <paramref name="program"/> (or a
-    /// provider-specific frontend) until the credential-injection helper ships.
+    /// rather than merely skipped. Pass <paramref name="registryPhase"/> to resolve that seam.
     /// </para>
     /// </remarks>
     public static IResourceBuilder<T> PublishAsPulumi<T>(
         this IResourceBuilder<T> builder,
         PulumiStepSuppressionSelector selector,
         Func<PulumiAdoptionContext, Task> program,
-        Func<IResource, bool>? suppressionResourceFilter = null)
+        Func<IResource, bool>? suppressionResourceFilter = null,
+        PulumiRegistryPhase? registryPhase = null)
         where T : IComputeEnvironmentResource
     {
         ArgumentNullException.ThrowIfNull(builder);
@@ -95,7 +102,10 @@ public static class PulumiNativeAdoptionExtensions
             suppressionResourceFilter ?? (_ => true),
             selector);
 
-        var backend = new PulumiBackendResource($"{builder.Resource.Name}-pulumi", builder.Resource, program);
+        var backend = new PulumiBackendResource($"{builder.Resource.Name}-pulumi", builder.Resource, program)
+        {
+            RegistryPhase = registryPhase,
+        };
         applicationBuilder.AddResource(backend);
 
         return builder;

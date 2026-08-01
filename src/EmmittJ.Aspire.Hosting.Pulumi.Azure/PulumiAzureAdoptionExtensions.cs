@@ -31,10 +31,19 @@ public static class PulumiAzureAdoptionExtensions
     /// The translation context, exposing the translated templates and their live outputs for post-processing.
     /// </returns>
     /// <remarks>
+    /// <para>
     /// Publish previews (<see cref="PulumiOperation.Preview"/>) substitute deterministic placeholders for
     /// ambient-credential invokes and unresolvable parameters (for example container images that have not
     /// been pushed yet), so the preview artifact is produced without Azure credentials. Deploys use real
     /// invokes and fail fast on unresolvable values.
+    /// </para>
+    /// <para>
+    /// When the backend has a registry-first phase (<see cref="PulumiBackendResource.RegistryPhase"/>), the
+    /// container registry templates that phase owns are excluded here so the same ARM resources are not
+    /// managed by two stacks. Their outputs still feed deployment-target parameters: the registry phase's
+    /// <c>up</c> back-propagates the deployed values into the registry resource's outputs, which the
+    /// excluded templates' <c>BicepOutputReference</c> parameters resolve from.
+    /// </para>
     /// </remarks>
     public static Task<AzureTranslationContext> TranslateAzureEnvironmentAsync(
         this PulumiAdoptionContext context,
@@ -43,6 +52,49 @@ public static class PulumiAzureAdoptionExtensions
         ArgumentNullException.ThrowIfNull(context);
         return new AzureEnvironmentTranslation(context, options ?? new AzureAdoptionOptions()).RunAsync();
     }
+
+    /// <summary>
+    /// Translates only the adopted Azure environment's container registry templates into Pulumi
+    /// azure-native resources — the program body for the registry-first phase
+    /// (<see cref="PulumiBackendResource.RegistryPhase"/>), which provisions the registry into its own
+    /// stack before Aspire's push step runs. Exports each template's outputs as stack outputs
+    /// (<c>{template}_{output}</c>, plus <c>resourceGroupName</c>); exporting is load-bearing: it roots the
+    /// applies that back-propagate the deployed values into the registry resource's outputs, which is what
+    /// lets Aspire's push step and the registry login callback resolve the registry name and endpoint.
+    /// </summary>
+    /// <param name="context">The adoption context passed to the registry phase program.</param>
+    /// <param name="options">
+    /// Optional translation settings. The resource group defaults to
+    /// <c>{adopted-environment-name}-registry-rg</c> — a group of its own, owned by the registry stack, so
+    /// destroying either stack never deletes resources managed by the other.
+    /// </param>
+    /// <returns>
+    /// The translation context, exposing the translated templates and their live outputs for post-processing.
+    /// </returns>
+    public static Task<AzureTranslationContext> TranslateAzureRegistriesAsync(
+        this PulumiAdoptionContext context,
+        AzureAdoptionOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        return new AzureEnvironmentTranslation(context, options ?? new AzureAdoptionOptions()).RunRegistriesAsync();
+    }
+
+    /// <summary>
+    /// Creates the ready-made registry-first phase for adopted Azure environments: provisions the
+    /// environment's container registry templates with <see cref="TranslateAzureRegistriesAsync"/> and
+    /// authenticates Docker to the registry with <c>az acr login</c> (override
+    /// <see cref="PulumiRegistryPhase.LoginCallback"/> for other credential flows). Pass the result to
+    /// <c>PublishAsPulumi(..., registryPhase: ...)</c>.
+    /// </summary>
+    /// <param name="options">
+    /// Optional translation settings for the registry stack (see
+    /// <see cref="TranslateAzureRegistriesAsync"/> for the resource-group default).
+    /// </param>
+    public static PulumiRegistryPhase CreateAzureRegistryPhase(AzureAdoptionOptions? options = null) =>
+        new(context => context.TranslateAzureRegistriesAsync(options))
+        {
+            LoginCallback = PulumiContainerRegistryHelpers.CreateAzureCliLoginCallback(),
+        };
 }
 
 /// <summary>
@@ -54,8 +106,6 @@ internal sealed class AzureEnvironmentTranslation(PulumiAdoptionContext context,
 {
     public async Task<AzureTranslationContext> RunAsync()
     {
-        var usePlaceholders = context.Operation == PulumiOperation.Preview;
-
         var targets = new List<AzureBicepResource>();
         foreach (var (_, annotation) in context.GetDeploymentTargets())
         {
@@ -65,7 +115,23 @@ internal sealed class AzureEnvironmentTranslation(PulumiAdoptionContext context,
             }
         }
 
-        var templates = CollectTemplates(targets);
+        var seeds = new List<AzureBicepResource>();
+        if (context.AdoptedEnvironment is AzureBicepResource environmentBicep)
+        {
+            seeds.Add(environmentBicep);
+        }
+
+        seeds.AddRange(targets.OrderBy(static t => t.Name, StringComparer.Ordinal));
+
+        // Registry templates owned by the registry-first phase are excluded so the same ARM resources are
+        // not managed by two stacks. Their BicepOutputReference parameters resolve through the value
+        // resolver instead: the registry phase's up back-propagated the deployed values into the registry
+        // resource's outputs (previews substitute placeholders).
+        var excluded = context.Backend.RegistryPhase is null
+            ? []
+            : CollectRegistryTemplates();
+
+        var templates = CollectTemplates(seeds, excluded);
         if (templates.Count == 0)
         {
             throw new InvalidOperationException(
@@ -77,10 +143,49 @@ internal sealed class AzureEnvironmentTranslation(PulumiAdoptionContext context,
                 "for exactly this reason).");
         }
 
-        var (resourceGroupName, location) = CreateResourceGroup(usePlaceholders);
+        return await TranslateAsync(templates, options.ResourceGroupName ?? $"{context.AdoptedEnvironment.Name}-rg")
+            .ConfigureAwait(false);
+    }
+
+    public async Task<AzureTranslationContext> RunRegistriesAsync()
+    {
+        var seeds = CollectRegistryTemplates()
+            .OrderBy(static r => r.Name, StringComparer.Ordinal)
+            .ToList();
+
+        if (seeds.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"The adopted environment '{context.AdoptedEnvironment.Name}' attached no Bicep-backed " +
+                "container registry to its deployment targets, so there is nothing for the registry phase " +
+                "to provision. TranslateAzureRegistriesAsync only supports native Azure environments that " +
+                "provision their own registry (for example AddAzureContainerAppEnvironment); make sure the " +
+                "native prepare steps ran before the Pulumi program (the registry step depends on " +
+                "'before-start' for exactly this reason).");
+        }
+
+        var templates = CollectTemplates(seeds, excluded: []);
+
+        // The registry stack owns its own resource group by default so destroying either stack never
+        // deletes resources managed by the other.
+        return await TranslateAsync(templates, options.ResourceGroupName ?? $"{context.AdoptedEnvironment.Name}-registry-rg")
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Collects the distinct Bicep-backed container registries the adopted environment attached to its
+    /// deployment targets — the templates the registry-first phase owns.
+    /// </summary>
+    private HashSet<AzureBicepResource> CollectRegistryTemplates() =>
+        [.. context.GetContainerRegistries().OfType<AzureBicepResource>()];
+
+    private async Task<AzureTranslationContext> TranslateAsync(List<AzureBicepResource> templates, string resourceGroupName)
+    {
+        var usePlaceholders = context.Operation == PulumiOperation.Preview;
+        var (groupName, location) = CreateResourceGroup(resourceGroupName, usePlaceholders);
 
         var translationContext = new AzureTranslationContext(
-            resourceGroupName,
+            groupName,
             location,
             new PulumiValueResolver(context.ExecutionContext, context.CancellationToken),
             context.Logger,
@@ -100,7 +205,7 @@ internal sealed class AzureEnvironmentTranslation(PulumiAdoptionContext context,
         // Register every template output as a stack output. This is load-bearing beyond observability: the
         // translator back-propagates deployed values into AzureBicepResource.Outputs through applies that
         // only run because the outputs are rooted here.
-        context.AddOutput("resourceGroupName", resourceGroupName);
+        context.AddOutput("resourceGroupName", groupName);
         foreach (var translated in translationContext.Templates.Values)
         {
             foreach (var (name, value) in translated.Outputs)
@@ -113,27 +218,21 @@ internal sealed class AzureEnvironmentTranslation(PulumiAdoptionContext context,
     }
 
     /// <summary>
-    /// Collects every template to translate — the adopted environment's own provisioning resource plus the
-    /// Bicep-backed deployment targets — expanded to the transitive closure of the templates their
-    /// parameters reference through <see cref="BicepOutputReference"/>s, in dependency order (referenced
-    /// templates first). Ordering is deterministic: seeds are visited environment-first, then targets by name.
+    /// Collects every template to translate — the seeds expanded to the transitive closure of the templates
+    /// their parameters reference through <see cref="BicepOutputReference"/>s, in dependency order
+    /// (referenced templates first). Excluded templates (and anything only they reference) are skipped.
+    /// Ordering is deterministic: seeds are visited in the order given.
     /// </summary>
-    private List<AzureBicepResource> CollectTemplates(List<AzureBicepResource> targets)
+    private static List<AzureBicepResource> CollectTemplates(
+        List<AzureBicepResource> seeds,
+        HashSet<AzureBicepResource> excluded)
     {
-        var seeds = new List<AzureBicepResource>();
-        if (context.AdoptedEnvironment is AzureBicepResource environmentBicep)
-        {
-            seeds.Add(environmentBicep);
-        }
-
-        seeds.AddRange(targets.OrderBy(static t => t.Name, StringComparer.Ordinal));
-
         var ordered = new List<AzureBicepResource>();
         var visited = new HashSet<AzureBicepResource>();
 
         void Visit(AzureBicepResource resource)
         {
-            if (!visited.Add(resource))
+            if (excluded.Contains(resource) || !visited.Add(resource))
             {
                 return;
             }
@@ -164,9 +263,8 @@ internal sealed class AzureEnvironmentTranslation(PulumiAdoptionContext context,
     /// created group's outputs are used so translated resources gain an implicit dependency on it; previews
     /// keep deterministic literals.
     /// </summary>
-    private (Output<string> Name, Output<string> Location) CreateResourceGroup(bool usePlaceholders)
+    private (Output<string> Name, Output<string> Location) CreateResourceGroup(string name, bool usePlaceholders)
     {
-        var name = options.ResourceGroupName ?? $"{context.AdoptedEnvironment.Name}-rg";
         var location = options.Location ?? new Config("azure-native").Get("location");
 
         if (options.UseExistingResourceGroup)

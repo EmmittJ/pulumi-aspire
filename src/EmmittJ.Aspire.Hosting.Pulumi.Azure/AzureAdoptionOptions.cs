@@ -10,7 +10,10 @@ public sealed class AzureAdoptionOptions
 {
     /// <summary>
     /// Gets or sets the name of the resource group every translated resource targets. Defaults to
-    /// <c>{adopted-environment-name}-rg</c>.
+    /// <c>{adopted-environment-name}-rg</c> for <c>TranslateAzureEnvironmentAsync</c> and to
+    /// <c>{adopted-environment-name}-registry-rg</c> for <c>TranslateAzureRegistriesAsync</c> (the
+    /// registry-first phase owns its own group so destroying either stack never deletes resources managed
+    /// by the other).
     /// </summary>
     public string? ResourceGroupName { get; set; }
 

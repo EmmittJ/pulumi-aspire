@@ -75,6 +75,19 @@ public sealed class PulumiBackendResource : Resource
     public string PulumiProjectName { get; set; }
 
     /// <summary>
+    /// Gets or sets the registry-first Pulumi phase. When set, the backend splices a
+    /// <c>pulumi-deploy-registry-{name}</c> step (required by <c>push-prereq</c>) that provisions the
+    /// adopted environment's container registry into the dedicated <c>{project}-registry</c> stack and
+    /// authenticates Docker to it before Aspire's push step runs — replacing the suppressed native registry
+    /// login step (for example Azure Container Apps' <c>login-to-acr-*</c>). A matching
+    /// <c>pulumi-destroy-registry-{name}</c> step tears the registry stack down after the main stack.
+    /// </summary>
+    public PulumiRegistryPhase? RegistryPhase { get; set; }
+
+    /// <summary>Gets the Pulumi project name of the registry-first phase's dedicated stack.</summary>
+    public string RegistryProjectName => $"{PulumiProjectName}-registry";
+
+    /// <summary>
     /// Gets or sets an explicit Pulumi stack name that overrides the deploy-time Aspire environment default.
     /// When <see langword="null"/> (the default), the stack is the Aspire environment name selected with
     /// <c>aspire deploy --environment &lt;name&gt;</c>.
@@ -109,8 +122,8 @@ public sealed class PulumiBackendResource : Resource
 
     private Task<IEnumerable<PipelineStep>> CreatePipelineSteps(PipelineStepFactoryContext factoryContext)
     {
-        return Task.FromResult<IEnumerable<PipelineStep>>(
-        [
+        var steps = new List<PipelineStep>
+        {
             new()
             {
                 Name = PulumiPipelineSteps.Publish(Name),
@@ -142,7 +155,38 @@ public sealed class PulumiBackendResource : Resource
                 RequiredBySteps = [WellKnownPipelineSteps.Destroy],
                 Resource = this,
             },
-        ]);
+        };
+
+        if (RegistryPhase is not null)
+        {
+            steps.Add(new PipelineStep
+            {
+                Name = PulumiPipelineSteps.DeployRegistry(Name),
+                Description = $"Provisions the container registry for {Name} (adopting {AdoptedEnvironment.Name}) using Pulumi and authenticates to it.",
+                Action = DeployRegistryAsync,
+                Tags = [WellKnownPipelineTags.ProvisionInfrastructure, PulumiPipelineSteps.PulumiTag],
+                // The registry must exist (and Docker be logged in) before Aspire's push step runs. The
+                // before-start edge is deliberate: the native prepare steps that attach the registry to the
+                // DeploymentTargetAnnotations run concurrently otherwise.
+                DependsOnSteps = [WellKnownPipelineSteps.BeforeStart],
+                RequiredBySteps = [WellKnownPipelineSteps.PushPrereq],
+                Resource = this,
+            });
+
+            steps.Add(new PipelineStep
+            {
+                Name = PulumiPipelineSteps.DestroyRegistry(Name),
+                Description = $"Destroys the container registry stack for {Name} using Pulumi.",
+                Action = DestroyRegistryAsync,
+                // The registry is its own Pulumi stack, so it needs its own destroy step; it runs after the
+                // main destroy so workloads referencing registry images are gone before the registry is.
+                DependsOnSteps = [WellKnownPipelineSteps.DestroyPrereq, PulumiPipelineSteps.Destroy(Name)],
+                RequiredBySteps = [WellKnownPipelineSteps.Destroy],
+                Resource = this,
+            });
+        }
+
+        return Task.FromResult<IEnumerable<PipelineStep>>(steps);
     }
 
     private async Task WritePublishArtifactAsync(PipelineStepContext context)
@@ -250,9 +294,100 @@ public sealed class PulumiBackendResource : Resource
         }
     }
 
-    private async Task<IDictionary<string, object?>> RunProgramAsync(PipelineStepContext context, PulumiOperation operation, ILogger logger)
+    private async Task DeployRegistryAsync(PipelineStepContext context)
     {
-        var adoptionContext = new PulumiAdoptionContext(
+        if (RegistryPhase is not { } phase)
+        {
+            return;
+        }
+
+        var logger = context.Services.GetRequiredService<ILoggerFactory>().CreateLogger<PulumiBackendResource>();
+        var runner = context.Services.GetRequiredService<PulumiRunner>();
+        var stackName = ResolveStackName(context.Services);
+
+        var task = await context.ReportingStep.CreateTaskAsync(
+            $"Provisioning the container registry for **{Name}** with Pulumi", context.CancellationToken).ConfigureAwait(false);
+
+        await using (task.ConfigureAwait(false))
+        {
+            try
+            {
+                await runner.ForStack(RegistryProjectName, stackName)
+                    .WithWorkDir(WorkingDirectory)
+                    .UpAsync(() => RunProgramAsync(context, PulumiOperation.Up, logger, phase.Program), context.CancellationToken)
+                    .ConfigureAwait(false);
+
+                if (phase.LoginCallback is { } login)
+                {
+                    var adoptionContext = CreateAdoptionContext(context, PulumiOperation.Up, logger);
+                    foreach (var registry in adoptionContext.GetContainerRegistries())
+                    {
+                        await login(context, registry).ConfigureAwait(false);
+                    }
+                }
+
+                await task.CompleteAsync(
+                    $"Container registry for **{Name}** provisioned.",
+                    CompletionState.Completed,
+                    context.CancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                await task.CompleteAsync(ex.Message, CompletionState.CompletedWithError, context.CancellationToken).ConfigureAwait(false);
+                throw;
+            }
+        }
+    }
+
+    private async Task DestroyRegistryAsync(PipelineStepContext context)
+    {
+        if (RegistryPhase is not { } phase)
+        {
+            return;
+        }
+
+        var logger = context.Services.GetRequiredService<ILoggerFactory>().CreateLogger<PulumiBackendResource>();
+        var runner = context.Services.GetRequiredService<PulumiRunner>();
+        var stackName = ResolveStackName(context.Services);
+
+        var task = await context.ReportingStep.CreateTaskAsync(
+            $"Destroying the container registry stack for **{Name}**", context.CancellationToken).ConfigureAwait(false);
+
+        await using (task.ConfigureAwait(false))
+        {
+            try
+            {
+                await runner.ForStack(RegistryProjectName, stackName)
+                    .WithWorkDir(WorkingDirectory)
+                    .DestroyAsync(() => RunProgramAsync(context, PulumiOperation.Destroy, logger, phase.Program), context.CancellationToken)
+                    .ConfigureAwait(false);
+
+                await task.CompleteAsync(
+                    $"Container registry stack for **{Name}** destroyed.",
+                    CompletionState.Completed,
+                    context.CancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                await task.CompleteAsync(ex.Message, CompletionState.CompletedWithError, context.CancellationToken).ConfigureAwait(false);
+                throw;
+            }
+        }
+    }
+
+    private async Task<IDictionary<string, object?>> RunProgramAsync(
+        PipelineStepContext context,
+        PulumiOperation operation,
+        ILogger logger,
+        Func<PulumiAdoptionContext, Task>? program = null)
+    {
+        var adoptionContext = CreateAdoptionContext(context, operation, logger);
+        await (program ?? _program)(adoptionContext).ConfigureAwait(false);
+        return adoptionContext.BuildOutputs();
+    }
+
+    private PulumiAdoptionContext CreateAdoptionContext(PipelineStepContext context, PulumiOperation operation, ILogger logger) =>
+        new(
             context.Model,
             this,
             operation,
@@ -260,10 +395,6 @@ public sealed class PulumiBackendResource : Resource
             context.Services,
             logger,
             context.CancellationToken);
-
-        await _program(adoptionContext).ConfigureAwait(false);
-        return adoptionContext.BuildOutputs();
-    }
 
     private static string ResolveOutputDirectory(PipelineStepContext context)
     {
