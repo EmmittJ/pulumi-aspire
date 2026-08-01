@@ -10,6 +10,7 @@
     <PackageVersion Include="Aspire.Hosting.Yarp" Version="13.4.6" />
     <!-- Native Aspire compute environments (spike: native-environment step adoption) -->
     <PackageVersion Include="Aspire.Hosting.Azure.AppContainers" Version="13.4.6" />
+    <PackageVersion Include="Aspire.Hosting.Azure.AppService" Version="13.4.6" />
     <PackageVersion Include="Aspire.Hosting.Kubernetes" Version="13.4.6-preview.1.26319.6" />
     <PackageVersion Include="Aspire.Hosting.Docker" Version="13.4.6" />
     <!-- Pulumi -->

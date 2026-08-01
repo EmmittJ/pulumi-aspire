@@ -48,6 +48,33 @@ public sealed record PulumiStepSuppressionSelector
     };
 
     /// <summary>
+    /// The execution steps of <c>AddAzureAppServiceEnvironment</c> (and its implicit
+    /// <c>AzureEnvironmentResource</c> and container registry): Azure login validation, provisioning-context
+    /// creation, Bicep provisioning, ACR login, and destroy. The step surface is currently identical to
+    /// <see cref="AzureContainerApps"/> because App Service reuses the same Azure environment and registry
+    /// plumbing, but the selector is pinned independently so an Aspire version bump that diverges the two
+    /// environments fails the App Service catalogue tests with the exact diff.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ⚠️ Suppressing <c>acr-login</c> means the Pulumi backend must supply registry credentials before
+    /// Aspire's push step runs (the one native behavior that is replaced rather than merely skipped).
+    /// </para>
+    /// <para>
+    /// ⚠️ App Service only materializes <c>DeploymentTargetAnnotation</c>s for project resources and
+    /// containers with a Dockerfile build (<c>AddDockerfile</c>/<c>WithDockerfile</c>); plain image
+    /// containers are silently skipped by the native prepare step and never appear in
+    /// <see cref="PulumiAdoptionContext.GetDeploymentTargets"/>.
+    /// </para>
+    /// </remarks>
+    public static PulumiStepSuppressionSelector AzureAppService { get; } = new()
+    {
+        StepNames = ["validate-azure-login", "create-provisioning-context"],
+        StepNamePrefixes = ["destroy-azure-"],
+        Tags = ["provision-infra", "acr-login"],
+    };
+
+    /// <summary>
     /// The execution steps of <c>AddKubernetesEnvironment</c>: everything Helm (prereq checks, deploy,
     /// uninstall) and destroy. The prepare/publish modeling steps keep running and write manifests normally.
     /// </summary>

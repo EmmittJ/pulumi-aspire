@@ -51,6 +51,60 @@ public class NativeEnvironmentStepCatalogueTests
     }
 
     [Fact]
+    public async Task AzureAppServiceEnvironment_RegistersExpectedSteps()
+    {
+        var builder = PipelineSpikeHarness.CreatePublishBuilder(out _);
+        builder.AddAzureAppServiceEnvironment("appsvc-env");
+        builder.AddContainer("web", "nginx:latest").WithHttpEndpoint(targetPort: 80);
+
+        using var app = builder.Build();
+
+        // Adding an App Service environment adds the same two supporting resources as ACA: the implicit
+        // AzureEnvironmentResource (owns login/provisioning-context/aggregate-provision/destroy) and the
+        // ACR registry resource. The execution-step surface is identical to ACA today; this catalogue pins
+        // that equivalence so an Aspire version bump that diverges the two fails here with the exact diff.
+        var model = app.Services.GetRequiredService<DistributedApplicationModel>();
+        var azureEnvironment = model.Resources.Single(r => r.GetType().Name == "AzureEnvironmentResource");
+        var registry = model.Resources.Single(r => r.GetType().Name == "AzureContainerRegistryResource");
+        var environment = model.Resources.Single(r => r.Name == "appsvc-env");
+
+        var environmentSteps = await PipelineSpikeHarness.ResolveStepsAsync(app, azureEnvironment);
+        Assert.Contains(environmentSteps, s => s.Name == "azure-prepare-resources" && s.RequiredBySteps.Contains(WellKnownPipelineSteps.BeforeStart));
+        Assert.Contains(environmentSteps, s => s.Name == "validate-azure-login" && s.RequiredBySteps.Contains(WellKnownPipelineSteps.Deploy));
+        Assert.Contains(environmentSteps, s => s.Name == "create-provisioning-context" && s.DependsOnSteps.Contains("validate-azure-login"));
+        Assert.Contains(environmentSteps, s => s.Name == "provision-azure-bicep-resources" && s.Tags.Contains("provision-infra"));
+        Assert.Contains(environmentSteps, s => s.Name == $"destroy-azure-{azureEnvironment.Name}" && s.RequiredBySteps.Contains(WellKnownPipelineSteps.Destroy));
+        Assert.Contains(environmentSteps, s => s.Name == $"publish-{azureEnvironment.Name}" && s.RequiredBySteps.Contains(WellKnownPipelineSteps.Publish));
+
+        var registrySteps = await PipelineSpikeHarness.ResolveStepsAsync(app, registry);
+        Assert.Contains(registrySteps, s => s.Name == $"provision-{registry.Name}" && s.Tags.Contains("provision-infra") && s.RequiredBySteps.Contains("provision-azure-bicep-resources"));
+        Assert.Contains(registrySteps, s => s.Name == $"login-to-acr-{registry.Name}" && s.Tags.Contains("acr-login") && s.RequiredBySteps.Contains(WellKnownPipelineSteps.PushPrereq));
+
+        var appServiceSteps = await PipelineSpikeHarness.ResolveStepsAsync(app, environment);
+        Assert.Contains(appServiceSteps, s => s.Name == "provision-appsvc-env" && s.Tags.Contains("provision-infra"));
+        // The prepare step is the one that materializes DeploymentTargetAnnotations; it must stay untouched.
+        Assert.Contains(appServiceSteps, s => s.Name == "prepare-azure-app-service-appsvc-env" && s.RequiredBySteps.Contains(WellKnownPipelineSteps.BeforeStart));
+        // App Service adds a publish-slot validation modeling step ACA does not have; it must keep running.
+        Assert.Contains(appServiceSteps, s => s.Name == "validate-appservice-config-appsvc-env" && s.RequiredBySteps.Contains(WellKnownPipelineSteps.Publish));
+        Assert.Contains(appServiceSteps, s => s.Name == "print-dashboard-url-appsvc-env" && s.Tags.Contains("print-summary"));
+
+        // The AzureAppService selector must classify exactly the execution steps and never the modeling steps.
+        var allSteps = environmentSteps.Concat(registrySteps).Concat(appServiceSteps).ToList();
+        var suppressed = allSteps.Where(PulumiStepSuppressionSelector.AzureAppService.Matches).Select(s => s.Name).Order().ToArray();
+        Assert.Equal(
+            [
+                "create-provisioning-context",
+                $"destroy-azure-{azureEnvironment.Name}",
+                $"login-to-acr-{registry.Name}",
+                "provision-appsvc-env",
+                $"provision-{registry.Name}",
+                "provision-azure-bicep-resources",
+                "validate-azure-login",
+            ],
+            suppressed);
+    }
+
+    [Fact]
     public async Task KubernetesEnvironment_RegistersExpectedSteps()
     {
         var builder = PipelineSpikeHarness.CreatePublishBuilder(out _);
