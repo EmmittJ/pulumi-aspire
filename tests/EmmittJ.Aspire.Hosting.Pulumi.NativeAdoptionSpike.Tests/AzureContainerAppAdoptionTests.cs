@@ -17,13 +17,9 @@ namespace EmmittJ.Aspire.Hosting.Pulumi.NativeAdoptionSpike.Tests;
 /// </summary>
 public class AzureContainerAppAdoptionTests
 {
-    private static readonly string[] s_azureExecutionStepNames = ["validate-azure-login", "create-provisioning-context"];
-
     private static bool IsAzureExecutionStep(PipelineStep step) =>
-        step.Tags.Contains("provision-infra")
-        || step.Tags.Contains("acr-login")
-        || step.Name.StartsWith("destroy-azure-", StringComparison.Ordinal)
-        || s_azureExecutionStepNames.Contains(step.Name);
+        // The production selector is the system under test: it must classify exactly the execution steps.
+        PulumiStepSuppressionSelector.AzureContainerApps.Matches(step);
 
     private static bool IsSandboxOnlyStep(PipelineStep step) =>
         // Not part of the adoption seam: neutralized only so the sandbox run needs no docker build/push

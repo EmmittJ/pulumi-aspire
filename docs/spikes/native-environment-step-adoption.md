@@ -2,7 +2,7 @@
 
 **Status:** ✅ Go (all three environments)
 **Aspire version:** 13.4.6 (`Aspire.Hosting.Kubernetes` 13.4.6-preview.1.26319.6)
-**Spike code:** `tests/EmmittJ.Aspire.Hosting.Pulumi.NativeAdoptionSpike.Tests` (throwaway; will not ship)
+**Spike code:** `tests/EmmittJ.Aspire.Hosting.Pulumi.NativeAdoptionSpike.Tests` (the suppression mechanism has since been promoted to production as `NativePipelineStepAdoption` + `PulumiStepSuppressionSelector`; the test project remains as the pinned step catalogue and end-to-end adoption proof)
 
 ## 🎯 Question
 

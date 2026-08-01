@@ -29,8 +29,11 @@ public class PulumiEnvironmentPipelineTests
         Assert.Contains(WellKnownPipelineSteps.Publish, publish.RequiredBySteps);
 
         var deploy = steps.Single(s => s.Name == "pulumi-deploy-app");
-        // Deploy must run after images are pushed so Container Apps reference real registry tags.
+        // Deploy must run after images are pushed so Container Apps reference real registry tags, and after
+        // before-start so it never observes a half-materialized model (prepare steps attach
+        // DeploymentTargetAnnotations concurrently otherwise).
         Assert.Contains(WellKnownPipelineSteps.Push, deploy.DependsOnSteps);
+        Assert.Contains(WellKnownPipelineSteps.BeforeStart, deploy.DependsOnSteps);
         Assert.Contains(WellKnownPipelineSteps.Deploy, deploy.RequiredBySteps);
     }
 

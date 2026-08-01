@@ -4,13 +4,18 @@
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <!--
-      Spike project: validates that native Aspire compute environments (Azure Container Apps, Kubernetes,
-      Docker Compose) can have their deploy/destroy pipeline steps suppressed and replaced by Pulumi-owned
-      steps that walk the environment's produced provisioning model. Throwaway code supporting
-      docs/spikes/native-environment-step-adoption.md; it will not ship.
+      Native-adoption tests: validate that native Aspire compute environments (Azure Container Apps,
+      Kubernetes, Docker Compose) can have their deploy/destroy pipeline steps suppressed via the production
+      NativePipelineStepAdoption/PulumiStepSuppressionSelector primitives and replaced by Pulumi-owned steps
+      that walk the environment's produced provisioning model. The catalogue tests pin the native step
+      names/tags the selectors depend on (see docs/spikes/native-environment-step-adoption.md).
     -->
     <NoWarn>$(NoWarn);ASPIREPIPELINES001;ASPIREPIPELINES002;ASPIREPIPELINES003;ASPIREPIPELINES004;ASPIRECOMPUTE001;ASPIRECOMPUTE002;ASPIRECOMPUTE003;ASPIREAZURE001;ASPIREPUBLISHERS001</NoWarn>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\EmmittJ.Aspire.Hosting.Pulumi\EmmittJ.Aspire.Hosting.Pulumi.csproj" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Aspire.Hosting" />

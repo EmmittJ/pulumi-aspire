@@ -18,16 +18,11 @@ namespace EmmittJ.Aspire.Hosting.Pulumi.NativeAdoptionSpike.Tests;
 public class KubernetesAndComposeAdoptionTests
 {
     private static bool IsKubernetesExecutionStep(PipelineStep step) =>
-        step.Tags.Contains("helm-deploy")
-        || step.Tags.Contains("helm-uninstall")
-        || step.Name.StartsWith("check-helm-prereqs-", StringComparison.Ordinal)
-        || step.Name.StartsWith("destroy-helm-", StringComparison.Ordinal)
-        || step.Name.StartsWith("print-", StringComparison.Ordinal);
+        // The production selector is the system under test: it must classify exactly the execution steps.
+        PulumiStepSuppressionSelector.Kubernetes.Matches(step);
 
     private static bool IsComposeExecutionStep(PipelineStep step) =>
-        step.Tags.Contains("docker-compose-up")
-        || step.Tags.Contains("docker-compose-down")
-        || step.Name.StartsWith("destroy-compose-", StringComparison.Ordinal);
+        PulumiStepSuppressionSelector.DockerCompose.Matches(step);
 
     private static bool IsSandboxOnlyStep(PipelineStep step) =>
         // Neutralized only so the sandbox needs no docker daemon for image builds; in a real deployment

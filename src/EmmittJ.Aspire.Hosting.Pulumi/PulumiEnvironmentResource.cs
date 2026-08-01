@@ -156,8 +156,11 @@ public abstract class PulumiEnvironmentResource : Resource, IComputeEnvironmentR
                 Name = PulumiPipelineSteps.Deploy(Name),
                 Description = $"Deploys {Name} using the Pulumi Automation API.",
                 Action = DeployAsync,
-                // Deploy after images are pushed so Container Apps reference real registry tags.
-                DependsOnSteps = [WellKnownPipelineSteps.Push],
+                // Deploy after images are pushed so Container Apps reference real registry tags. The
+                // before-start edge is deliberate: the scheduler runs independent steps concurrently, and
+                // without it the deploy step can start while a prepare step (which attaches
+                // DeploymentTargetAnnotations) is still running, observing a half-materialized model.
+                DependsOnSteps = [WellKnownPipelineSteps.Push, WellKnownPipelineSteps.BeforeStart],
                 RequiredBySteps = [WellKnownPipelineSteps.Deploy],
                 Tags = [PulumiPipelineSteps.PulumiTag],
                 Resource = this,
