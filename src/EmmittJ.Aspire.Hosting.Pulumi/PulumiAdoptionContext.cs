@@ -26,6 +26,7 @@ public sealed class PulumiAdoptionContext
     internal PulumiAdoptionContext(
         DistributedApplicationModel model,
         PulumiBackendResource backend,
+        PulumiOperation operation,
         DistributedApplicationExecutionContext executionContext,
         IServiceProvider services,
         ILogger logger,
@@ -33,6 +34,7 @@ public sealed class PulumiAdoptionContext
     {
         Model = model;
         Backend = backend;
+        Operation = operation;
         ExecutionContext = executionContext;
         Services = services;
         Logger = logger;
@@ -47,6 +49,13 @@ public sealed class PulumiAdoptionContext
 
     /// <summary>Gets the adopted native compute environment resource.</summary>
     public IComputeEnvironmentResource AdoptedEnvironment => Backend.AdoptedEnvironment;
+
+    /// <summary>
+    /// Gets the Pulumi operation this program run is part of. Publish previews run as
+    /// <see cref="PulumiOperation.Preview"/> and must not require cloud credentials; deploys run as
+    /// <see cref="PulumiOperation.Up"/>.
+    /// </summary>
+    public PulumiOperation Operation { get; }
 
     /// <summary>Gets the execution context (publish/deploy) for resolving callback values.</summary>
     public DistributedApplicationExecutionContext ExecutionContext { get; }

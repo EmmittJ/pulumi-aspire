@@ -165,7 +165,7 @@ public sealed class PulumiBackendResource : Resource
             {
                 var result = await runner.ForStack(PulumiProjectName, stackName)
                     .WithWorkDir(WorkingDirectory)
-                    .PreviewAsync(() => RunProgramAsync(context, logger), context.CancellationToken)
+                    .PreviewAsync(() => RunProgramAsync(context, PulumiOperation.Preview, logger), context.CancellationToken)
                     .ConfigureAwait(false);
 
                 var outputDirectory = ResolveOutputDirectory(context);
@@ -201,7 +201,7 @@ public sealed class PulumiBackendResource : Resource
             {
                 var result = await runner.ForStack(PulumiProjectName, stackName)
                     .WithWorkDir(WorkingDirectory)
-                    .UpAsync(() => RunProgramAsync(context, logger), context.CancellationToken)
+                    .UpAsync(() => RunProgramAsync(context, PulumiOperation.Up, logger), context.CancellationToken)
                     .ConfigureAwait(false);
 
                 _lastOutputs = result.Outputs.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Value?.ToString());
@@ -234,7 +234,7 @@ public sealed class PulumiBackendResource : Resource
             {
                 await runner.ForStack(PulumiProjectName, stackName)
                     .WithWorkDir(WorkingDirectory)
-                    .DestroyAsync(() => RunProgramAsync(context, logger), context.CancellationToken)
+                    .DestroyAsync(() => RunProgramAsync(context, PulumiOperation.Destroy, logger), context.CancellationToken)
                     .ConfigureAwait(false);
 
                 await task.CompleteAsync(
@@ -250,11 +250,12 @@ public sealed class PulumiBackendResource : Resource
         }
     }
 
-    private async Task<IDictionary<string, object?>> RunProgramAsync(PipelineStepContext context, ILogger logger)
+    private async Task<IDictionary<string, object?>> RunProgramAsync(PipelineStepContext context, PulumiOperation operation, ILogger logger)
     {
         var adoptionContext = new PulumiAdoptionContext(
             context.Model,
             this,
+            operation,
             context.ExecutionContext,
             context.Services,
             logger,

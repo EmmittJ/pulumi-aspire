@@ -78,11 +78,16 @@ Two Aspire API facts (verified against 13.4.6) fix the seam: `PipelineStep.Actio
 
 Suppressing the ACA `login-to-acr-*` step (`RequiredBy push-prereq`) means the Pulumi backend must supply registry credentials before Aspire's push step runs — the one native behavior that is *replaced* rather than merely skipped. The existing registry pre-stack flow covers this for Pulumi-owned environments; the adoption frontend must either provision the registry in a first Pulumi phase or inject credentials resolved from Pulumi outputs.
 
+### Azure adoption frontend
+
+`TranslateAzureEnvironmentAsync(options)` (on `PulumiAdoptionContext`, in the Azure package) is the ready-made program body for adopted Azure Container Apps environments. It discovers every Bicep template the adopted environment materialized — the environment resource itself plus each deployment target, expanded to the closure of templates referenced through `BicepOutputReference` parameters (e.g. the standalone container registry template) — orders them by parameter dependencies, creates or references the target resource group, and translates each template with the [azure-provisioning translation core](spikes/azure-provisioning-translation-source.md) (`AzureProvisioningTemplateTranslator`). Every template output is exported as a `{template}_{output}` stack output, which both surfaces the values and roots the translator's back-propagation applies. `AzureAdoptionOptions` controls the resource group (name, location, use-existing) and exposes a `ConfigureResource` hook for per-resource input/option customization. The `PulumiOperation` carried by the context selects the translation mode: `Preview` substitutes deterministic placeholders for ambient invokes so `pulumi preview` needs no Azure credentials, while `Up` resolves them through real invokes.
+
 ### Roadmap
 
 1. ✅ Suppression primitives: `NativePipelineStepAdoption` + `PulumiStepSuppressionSelector` with pinned per-provider selectors.
 2. ✅ A generic Pulumi backend resource (`PulumiBackendResource`) and the `PublishAsPulumi(...)` decorator that applies the suppression, splices the Pulumi publish/deploy/destroy steps, and walks the materialized model through `PulumiAdoptionContext` (Bicep for ACA, deployment targets for Kubernetes/Compose).
-3. 🔨 The ACR-login/push-credential seam for the Azure frontend.
+3. ✅ The Azure adoption frontend: `TranslateAzureEnvironmentAsync` wires the Bicep→azure-native translation core into the adoption flow, pinned by mock-engine fixture tests over the real ACA provisioning model.
+4. 🔨 The ACR-login/push-credential seam for the Azure frontend.
 
 
 ## References

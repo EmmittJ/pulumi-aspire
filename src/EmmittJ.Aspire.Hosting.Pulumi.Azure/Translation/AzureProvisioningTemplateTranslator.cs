@@ -175,6 +175,13 @@ internal sealed class AzureProvisioningTemplateTranslator
             return translator.Translate(compiled, name, "<default>");
         }
 
+        if (name == AzureBicepResource.KnownParameters.Location)
+        {
+            // Native deploys inject the location from the deployment context (it is deliberately excluded
+            // from the Parameters back-fill); the translation supplies the target resource group's location.
+            return _context.Location;
+        }
+
         throw AzureProvisioningTranslationException.ForConstruct(
             _templateName, name, "<parameter>",
             "the template declares this parameter but the Aspire resource provides no value for it");
@@ -184,6 +191,7 @@ internal sealed class AzureProvisioningTemplateTranslator
     {
         "principalId" or "userPrincipalId" => _context.PrincipalId,
         "principalType" => Output.Create("User"),
+        "location" => _context.Location,
         _ => throw AzureProvisioningTranslationException.ForConstruct(
             _templateName, name, "<parameter>",
             $"the known parameter '{name}' is not supported by the Pulumi translation"),

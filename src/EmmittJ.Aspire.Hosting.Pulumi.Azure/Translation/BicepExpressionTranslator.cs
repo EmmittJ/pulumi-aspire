@@ -79,14 +79,17 @@ internal sealed partial class BicepExpressionTranslator(
         }
 
         // Output-valued keys (e.g. userAssignedIdentities keyed by an identity's resource id) force the
-        // whole dictionary to be lifted into a single Output.
+        // whole dictionary to be lifted into a single Output. The lifted value must use the immutable
+        // dictionary form the Pulumi serializer's upfront type check accepts.
         var keys = Output.All(lifted.Select(p => p.Key));
         return keys.Apply(resolved =>
         {
-            var combined = new Dictionary<string, object?>(literal);
+            var combined = literal.ToImmutableDictionary(
+                static p => p.Key,
+                static p => AzureNativeResource.NormalizeValue(p.Value));
             for (var i = 0; i < resolved.Length; i++)
             {
-                combined[resolved[i]] = lifted[i].Value;
+                combined = combined.SetItem(resolved[i], AzureNativeResource.NormalizeValue(lifted[i].Value));
             }
 
             return combined;

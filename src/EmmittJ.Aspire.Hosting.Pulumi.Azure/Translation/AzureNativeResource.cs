@@ -25,7 +25,7 @@ public sealed class AzureNativeResource : global::Pulumi.CustomResource
         string name,
         IDictionary<string, object?> properties,
         CustomResourceOptions? options = null)
-        : base(token, name, new DictionaryResourceArgs(properties.ToImmutableDictionary()), WithProviderVersion(options))
+        : base(token, name, new DictionaryResourceArgs(Normalize(properties)), WithProviderVersion(options))
     {
     }
 
@@ -34,6 +34,22 @@ public sealed class AzureNativeResource : global::Pulumi.CustomResource
     /// for automatic plugin acquisition on untyped resources and invokes.
     /// </summary>
     public static string ProviderVersion { get; } = ResolveProviderVersion();
+
+    /// <summary>
+    /// Deep-converts mutable dictionaries/lists in a translated property bag into the immutable forms
+    /// <see cref="DictionaryResourceArgs"/> requires (only <c>ImmutableDictionary&lt;string, ...&gt;</c> and
+    /// <c>ImmutableArray&lt;...&gt;</c> generics are accepted by the Pulumi serializer's type check).
+    /// </summary>
+    internal static ImmutableDictionary<string, object?> Normalize(IDictionary<string, object?> properties) =>
+        properties.ToImmutableDictionary(static p => p.Key, static p => NormalizeValue(p.Value));
+
+    internal static object? NormalizeValue(object? value) => value switch
+    {
+        string or ImmutableDictionary<string, object?> or ImmutableArray<object?> => value,
+        IDictionary<string, object?> map => map.ToImmutableDictionary(static p => p.Key, static p => NormalizeValue(p.Value)),
+        IEnumerable<object?> list => list.Select(NormalizeValue).ToImmutableArray(),
+        _ => value,
+    };
 
     internal static CustomResourceOptions WithProviderVersion(CustomResourceOptions? options)
     {

@@ -162,6 +162,7 @@ public class PulumiNativeAdoptionTests
         var context = new PulumiAdoptionContext(
             app.Services.GetRequiredService<DistributedApplicationModel>(),
             backend,
+            PulumiOperation.Preview,
             app.Services.GetRequiredService<DistributedApplicationExecutionContext>(),
             app.Services,
             NullLogger.Instance,
