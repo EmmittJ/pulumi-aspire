@@ -65,14 +65,11 @@ builder.AddYarp("app")
     .PublishWithStaticFiles(frontend); // Publish: serve static files
 ```
 
-**Pulumi-Managed Azure Container Apps Environment** - Aspire models the environment, Pulumi deploys it:
+**Pulumi-Managed Azure Container Apps Environment** - Aspire models the environment, Pulumi deploys it —
+one line; the suppression selector, translation program, and registry-first phase are inferred:
 ```csharp
-var azureOptions = new AzureAdoptionOptions { Location = "eastus" };
 builder.AddAzureContainerAppEnvironment("vite-yarp-static")
-    .PublishAsPulumi(
-        PulumiStepSuppressionSelector.AzureContainerApps,
-        context => context.TranslateAzureEnvironmentAsync(azureOptions),
-        registryPhase: PulumiAzureAdoptionExtensions.CreateAzureRegistryPhase(azureOptions));
+    .PublishAsPulumi(new AzureAdoptionOptions { Location = "eastus" });
 ```
 
 ## Sample Outputs

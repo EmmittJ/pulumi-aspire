@@ -49,16 +49,13 @@ dotnet add package EmmittJ.Aspire.Hosting.Pulumi.Azure
 ```csharp
 var builder = DistributedApplication.CreateBuilder(args);
 
-// Model the environment with Aspire's own integration, then hand deployment to Pulumi.
-// The resource name becomes the Pulumi project ("my-app-pulumi"); the stack is the
+// Model the environment with Aspire's own integration, then hand deployment to Pulumi — one line.
+// The suppression selector, translation program, and registry-first phase are all inferred from the
+// environment. The resource name becomes the Pulumi project ("my-app-pulumi"); the stack is the
 // deployment environment (dev/staging/prod), selected at deploy time with
 // `aspire deploy --environment <name>`.
-var azureOptions = new AzureAdoptionOptions { Location = "eastus" };
 builder.AddAzureContainerAppEnvironment("my-app")
-    .PublishAsPulumi(
-        PulumiStepSuppressionSelector.AzureContainerApps,
-        context => context.TranslateAzureEnvironmentAsync(azureOptions),
-        registryPhase: PulumiAzureAdoptionExtensions.CreateAzureRegistryPhase(azureOptions));
+    .PublishAsPulumi(new AzureAdoptionOptions { Location = "eastus" });
 
 // Add your resources
 var frontend = builder.AddViteApp("frontend", "./frontend");
@@ -112,9 +109,10 @@ var azureOptions = new AzureAdoptionOptions
 
 ### Registry-First Phase
 
-Container images must land in a registry before `pulumi up` wires them into compute resources. Pass a
-registry phase to provision the environment's container registry in its own Pulumi stack ahead of
-Aspire's image push step (`CreateAzureRegistryPhase` also authenticates Docker via `az acr login`):
+Container images must land in a registry before `pulumi up` wires them into compute resources. The Azure
+`PublishAsPulumi` overload handles this by default: the container registry Aspire modeled for the
+environment is provisioned in its own Pulumi stack ahead of Aspire's image push step, and Docker is
+authenticated via `az acr login`. When using the general overload, pass the phase explicitly:
 
 ```csharp
 builder.AddAzureContainerAppEnvironment("my-app")
@@ -127,12 +125,13 @@ builder.AddAzureContainerAppEnvironment("my-app")
 ### Custom Programs
 
 The Pulumi program is just an async callback over the publishing context — traverse the adopted
-environment's deployment targets and registries, translate them, and export outputs:
+environment's deployment targets and registries, translate them, and export outputs. The selector and
+registry phase stay inferred:
 
 ```csharp
 environment.PublishAsPulumi(
-    PulumiStepSuppressionSelector.AzureContainerApps,
-    async context =>
+    azureOptions,
+    program: async context =>
     {
         var translation = await context.TranslateAzureEnvironmentAsync(azureOptions);
         // Post-process translation.Templates / translation.Outputs, or add extra
@@ -140,13 +139,16 @@ environment.PublishAsPulumi(
     });
 ```
 
+For full control (custom selectors, suppression filters, or replacing the registry phase), use the general
+`PublishAsPulumi(selector, program, ...)` overload from the core package.
+
 ### Multiple Environments
 
 ```csharp
 // One adopted environment deploys to many Pulumi stacks. The stack is the Aspire deployment
 // environment, selected at deploy time — you do NOT register one resource per environment.
 builder.AddAzureContainerAppEnvironment("my-app")
-    .PublishAsPulumi(/* ... */);
+    .PublishAsPulumi();
 ```
 
 ```bash
@@ -167,10 +169,7 @@ To decouple the Pulumi stack from the Aspire environment name, override it expli
 ```csharp
 // Deploy always targets the "prod-eu" stack regardless of --environment.
 builder.AddAzureContainerAppEnvironment("my-app")
-    .PublishAsPulumi(
-        PulumiStepSuppressionSelector.AzureContainerApps,
-        context => context.TranslateAzureEnvironmentAsync(azureOptions),
-        configureEnvironment: env => env.WithStackName("prod-eu"));
+    .PublishAsPulumi(configureEnvironment: env => env.WithStackName("prod-eu"));
 ```
 
 ## 🗺️ Potential follow-ups
