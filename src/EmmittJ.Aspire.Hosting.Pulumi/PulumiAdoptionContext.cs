@@ -17,8 +17,8 @@ namespace EmmittJ.Aspire.Hosting.Pulumi;
 /// <remarks>
 /// A single instance is created per Pulumi operation (preview, up, destroy) and passed to the program
 /// delegate supplied to <c>PublishAsPulumi</c>. The program uses it to walk the provisioning model that the
-/// adopted native environment's modeling steps materialized (Bicep-backed deployment targets for Azure
-/// Container Apps, deployment targets for Kubernetes/Docker Compose) and to export stack outputs.
+/// adopted native environment's modeling steps materialized (Bicep-backed deployment targets for the Azure
+/// environments) and to export stack outputs.
 /// </remarks>
 public sealed class PulumiAdoptionContext
 {
@@ -79,9 +79,8 @@ public sealed class PulumiAdoptionContext
     /// </summary>
     /// <returns>
     /// Each targeted compute resource paired with the <see cref="DeploymentTargetAnnotation"/> attached for
-    /// the adopted environment. For Azure Container Apps the annotation's target is an
-    /// <c>AzureProvisioningResource</c> exposing Bicep; for Kubernetes/Docker Compose it is the
-    /// provider-specific service resource.
+    /// the adopted environment. For the Azure environments the annotation's target is an
+    /// <c>AzureProvisioningResource</c> exposing Bicep.
     /// </returns>
     public IEnumerable<(IComputeResource Compute, DeploymentTargetAnnotation Target)> GetDeploymentTargets()
     {

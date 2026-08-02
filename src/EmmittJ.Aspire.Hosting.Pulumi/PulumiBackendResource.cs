@@ -21,8 +21,8 @@ namespace EmmittJ.Aspire.Hosting.Pulumi;
 /// <para>
 /// This is the execution half of the adopt-and-traverse mode (see
 /// <c>docs/spikes/native-environment-step-adoption.md</c>): the adopted native environment
-/// (<c>AddAzureContainerAppEnvironment</c>, <c>AddKubernetesEnvironment</c>,
-/// <c>AddDockerComposeEnvironment</c>) keeps materializing the full provisioning model through its
+/// (<c>AddAzureContainerAppEnvironment</c>, <c>AddAzureAppServiceEnvironment</c>) keeps
+/// materializing the full provisioning model through its
 /// prepare/publish steps, while its execution steps are suppressed by
 /// <see cref="NativePipelineStepAdoption.SuppressExecutionSteps"/> and this backend's spliced steps become
 /// the execution engine. Create it with the <c>PublishAsPulumi</c> decorator rather than directly.

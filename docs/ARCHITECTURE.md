@@ -60,19 +60,19 @@ The Azure package is the only provider implemented in this repository today.
 
 ## Native environment adoption (adopt-and-traverse)
 
-Alongside the Pulumi-owned environments above, the integration is building a second mode validated by the [native-environment step-adoption spike](spikes/native-environment-step-adoption.md) (**Go** for Azure Container Apps, Kubernetes, and Docker Compose): users keep configuring Aspire's **native** compute environments (`AddAzureContainerAppEnvironment`, `AddKubernetesEnvironment`, `AddDockerComposeEnvironment`), and Pulumi adopts them — the native environment's modeling steps still materialize the full provisioning model (Bicep templates, deployment targets, manifests), while its execution steps (Azure provisioning, Helm, `docker compose up`) are neutralized and Pulumi-owned steps spliced into the same pipeline slots become the execution engine over that model.
+Alongside the Pulumi-owned environments above, the integration is building a second mode validated by the [native-environment step-adoption spike](spikes/native-environment-step-adoption.md): users keep configuring Aspire's **native** Azure compute environments (`AddAzureContainerAppEnvironment`, `AddAzureAppServiceEnvironment`), and Pulumi adopts them — the native environment's modeling steps still materialize the full provisioning model (Bicep templates, deployment targets), while its execution steps (Azure provisioning, ACR login) are neutralized and Pulumi-owned steps spliced into the same pipeline slots become the execution engine over that model. The spike also proved the seam for Kubernetes and Docker Compose, but those adoption frontends are deferred for now — the current focus is the Azure Native providers.
 
 ### Mechanism
 
 Two Aspire API facts (verified against 13.4.6) fix the seam: `PipelineStep.Action` and `PipelineConfigurationContext.Steps` are init-only, so a pipeline-configuration callback can rewire edges but cannot remove or replace steps. Suppression therefore happens **at builder time, before build**, using only public APIs:
 
 - `NativePipelineStepAdoption.SuppressExecutionSteps` re-wraps each adopted resource's `PipelineStepAnnotation`s so steps matching a suppression selector are substituted with **same-name no-op clones**. Because a clone keeps the original name, tags, and `DependsOn`/`RequiredBy` edges, the step graph stays identical: every other step schedules exactly as before and graph validation is untouched.
-- `PulumiStepSuppressionSelector` keeps the per-provider selectors **data-driven** (exact names, name prefixes, tags): `AzureContainerApps`, `Kubernetes`, and `DockerCompose` are shipped as well-known selectors. The native step names/tags are undocumented strings, so the catalogue tests in `EmmittJ.Aspire.Hosting.Pulumi.NativeAdoptionSpike.Tests` pin them — an Aspire version bump that changes them fails CI with the exact diff instead of silently deploying twice.
+- `PulumiStepSuppressionSelector` keeps the per-provider selectors **data-driven** (exact names, name prefixes, tags): `AzureContainerApps` and `AzureAppService` are shipped as well-known selectors. The native step names/tags are undocumented strings, so the catalogue tests in `EmmittJ.Aspire.Hosting.Pulumi.NativeAdoptionSpike.Tests` pin them — an Aspire version bump that changes them fails CI with the exact diff instead of silently deploying twice.
 - Spliced Pulumi steps must include `BeforeStart` in their dependencies (in addition to `Push`) so they never observe a half-materialized model while native prepare steps are still attaching `DeploymentTargetAnnotation`s.
 
 ### Decorator and backend
 
-`PublishAsPulumi(selector, program)` (on the native environment's resource builder) is the user-facing entry point: in publish mode it applies the suppression (all resources by default, since native environments spread execution steps across implicitly added resources; a filter parameter narrows this when multiple environments coexist) and registers a `PulumiBackendResource` named `{environment}-pulumi`. In run mode it is a no-op so `aspire run` stays untouched. The backend splices `pulumi-publish/deploy/destroy-{name}` steps into the standard slots (deploy: `dependsOn push + before-start`, `requiredBy deploy`) and runs the supplied program through the Automation API; the program receives a `PulumiAdoptionContext` and walks the materialized model with `GetDeploymentTargets()` (Bicep-backed targets for ACA, service resources for Kubernetes/Compose), exporting stack outputs via `AddOutput`.
+`PublishAsPulumi(selector, program)` (on the native environment's resource builder) is the user-facing entry point: in publish mode it applies the suppression (all resources by default, since native environments spread execution steps across implicitly added resources; a filter parameter narrows this when multiple environments coexist) and registers a `PulumiBackendResource` named `{environment}-pulumi`. In run mode it is a no-op so `aspire run` stays untouched. The backend splices `pulumi-publish/deploy/destroy-{name}` steps into the standard slots (deploy: `dependsOn push + before-start`, `requiredBy deploy`) and runs the supplied program through the Automation API; the program receives a `PulumiAdoptionContext` and walks the materialized model with `GetDeploymentTargets()` (Bicep-backed targets for the Azure environments), exporting stack outputs via `AddOutput`.
 
 ### Registry-first phase (the ACR-login/push-credential seam)
 
@@ -87,10 +87,10 @@ For Azure, `CreateAzureRegistryPhase(options)` is the ready-made phase: its prog
 ### Roadmap
 
 1. ✅ Suppression primitives: `NativePipelineStepAdoption` + `PulumiStepSuppressionSelector` with pinned per-provider selectors.
-2. ✅ A generic Pulumi backend resource (`PulumiBackendResource`) and the `PublishAsPulumi(...)` decorator that applies the suppression, splices the Pulumi publish/deploy/destroy steps, and walks the materialized model through `PulumiAdoptionContext` (Bicep for ACA, deployment targets for Kubernetes/Compose).
+2. ✅ A generic Pulumi backend resource (`PulumiBackendResource`) and the `PublishAsPulumi(...)` decorator that applies the suppression, splices the Pulumi publish/deploy/destroy steps, and walks the materialized model through `PulumiAdoptionContext`.
 3. ✅ The Azure adoption frontend: `TranslateAzureEnvironmentAsync` wires the Bicep→azure-native translation core into the adoption flow, pinned by mock-engine fixture tests over the real ACA provisioning model.
 4. ✅ The ACR-login/push-credential seam: `PulumiRegistryPhase` + `CreateAzureRegistryPhase` provision the registry into its own stack before push and re-implement the login against Pulumi outputs.
-5. 🔨 Kubernetes and Docker Compose adoption frontends over the materialized deployment targets.
+5. ⏸️ Kubernetes and Docker Compose adoption frontends — deferred; the current focus is the Azure Native providers.
 
 
 ## References

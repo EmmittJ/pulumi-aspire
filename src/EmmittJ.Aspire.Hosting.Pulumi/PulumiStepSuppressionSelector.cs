@@ -74,26 +74,6 @@ public sealed record PulumiStepSuppressionSelector
         Tags = ["provision-infra", "acr-login"],
     };
 
-    /// <summary>
-    /// The execution steps of <c>AddKubernetesEnvironment</c>: everything Helm (prereq checks, deploy,
-    /// uninstall) and destroy. The prepare/publish modeling steps keep running and write manifests normally.
-    /// </summary>
-    public static PulumiStepSuppressionSelector Kubernetes { get; } = new()
-    {
-        StepNamePrefixes = ["check-helm-prereqs-", "destroy-helm-"],
-        Tags = ["helm-deploy", "helm-uninstall"],
-    };
-
-    /// <summary>
-    /// The execution steps of <c>AddDockerComposeEnvironment</c>: <c>docker compose up</c>/<c>down</c> and
-    /// destroy. The prepare/publish modeling steps keep running and write the compose artifacts normally.
-    /// </summary>
-    public static PulumiStepSuppressionSelector DockerCompose { get; } = new()
-    {
-        StepNamePrefixes = ["destroy-compose-"],
-        Tags = ["docker-compose-up", "docker-compose-down"],
-    };
-
     /// <summary>Determines whether the given pipeline step matches this selector.</summary>
     /// <param name="step">The pipeline step to test.</param>
     /// <returns><see langword="true"/> when the step is an execution step to suppress.</returns>

@@ -60,10 +60,10 @@ public class PulumiNativeAdoptionTests
         var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
         var environment = builder.AddResource(new TestComputeEnvironmentResource("native-env"));
 
-        environment.PublishAsPulumi(PulumiStepSuppressionSelector.Kubernetes, _ => Task.CompletedTask);
+        environment.PublishAsPulumi(PulumiStepSuppressionSelector.AzureContainerApps, _ => Task.CompletedTask);
 
         var exception = Assert.Throws<InvalidOperationException>(() =>
-            environment.PublishAsPulumi(PulumiStepSuppressionSelector.Kubernetes, _ => Task.CompletedTask));
+            environment.PublishAsPulumi(PulumiStepSuppressionSelector.AzureContainerApps, _ => Task.CompletedTask));
         Assert.Contains("native-env", exception.Message);
     }
 
@@ -112,7 +112,7 @@ public class PulumiNativeAdoptionTests
         var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
         var environment = builder.AddResource(new TestComputeEnvironmentResource("native-env"));
 
-        environment.PublishAsPulumi(PulumiStepSuppressionSelector.DockerCompose, _ => Task.CompletedTask);
+        environment.PublishAsPulumi(PulumiStepSuppressionSelector.AzureContainerApps, _ => Task.CompletedTask);
 
         using var app = builder.Build();
         var backend = builder.Resources.OfType<PulumiBackendResource>().Single();
@@ -145,7 +145,7 @@ public class PulumiNativeAdoptionTests
         var compute = builder.AddContainer("web", "nginx:latest");
         var otherCompute = builder.AddContainer("api", "nginx:latest");
 
-        environment.PublishAsPulumi(PulumiStepSuppressionSelector.Kubernetes, _ => Task.CompletedTask);
+        environment.PublishAsPulumi(PulumiStepSuppressionSelector.AzureContainerApps, _ => Task.CompletedTask);
 
         // Simulate what the native environment's prepare step does: attach deployment targets.
         var adoptedTarget = new TestResource("web-target");
@@ -180,7 +180,7 @@ public class PulumiNativeAdoptionTests
     {
         var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
         var environment = builder.AddResource(new TestComputeEnvironmentResource("native-env"));
-        environment.PublishAsPulumi(PulumiStepSuppressionSelector.DockerCompose, _ => Task.CompletedTask);
+        environment.PublishAsPulumi(PulumiStepSuppressionSelector.AzureContainerApps, _ => Task.CompletedTask);
 
         using var app = builder.Build();
         var backend = builder.Resources.OfType<PulumiBackendResource>().Single();
@@ -195,7 +195,7 @@ public class PulumiNativeAdoptionTests
         var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
         var environment = builder.AddResource(new TestComputeEnvironmentResource("native-env"));
 
-        environment.PublishAsPulumi(PulumiStepSuppressionSelector.DockerCompose, _ => Task.CompletedTask);
+        environment.PublishAsPulumi(PulumiStepSuppressionSelector.AzureContainerApps, _ => Task.CompletedTask);
 
         using var app = builder.Build();
         var backend = builder.Resources.OfType<PulumiBackendResource>().Single();

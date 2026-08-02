@@ -63,33 +63,6 @@ public class NativePipelineStepAdoptionTests
     }
 
     [Fact]
-    public void KubernetesSelector_SuppressesHelm_KeepsModeling()
-    {
-        var selector = PulumiStepSuppressionSelector.Kubernetes;
-
-        Assert.True(selector.Matches(CreateStep("check-helm-prereqs-k8s-env")));
-        Assert.True(selector.Matches(CreateStep("helm-deploy-k8s-env", "helm-deploy")));
-        Assert.True(selector.Matches(CreateStep("helm-uninstall-k8s-env", "helm-uninstall")));
-        Assert.True(selector.Matches(CreateStep("destroy-helm-k8s-env")));
-
-        Assert.False(selector.Matches(CreateStep("prepare-deployment-targets-k8s-env")));
-        Assert.False(selector.Matches(CreateStep("publish-k8s-env")));
-    }
-
-    [Fact]
-    public void DockerComposeSelector_SuppressesComposeUpDown_KeepsModeling()
-    {
-        var selector = PulumiStepSuppressionSelector.DockerCompose;
-
-        Assert.True(selector.Matches(CreateStep("docker-compose-up-compose-env", "docker-compose-up")));
-        Assert.True(selector.Matches(CreateStep("docker-compose-down-compose-env", "docker-compose-down")));
-        Assert.True(selector.Matches(CreateStep("destroy-compose-compose-env")));
-
-        Assert.False(selector.Matches(CreateStep("prepare-deployment-targets-compose-env")));
-        Assert.False(selector.Matches(CreateStep("publish-compose-env")));
-    }
-
-    [Fact]
     public void CloneAsNoOp_PreservesIdentityAndGraphEdges()
     {
         var resource = new TestResource("native");

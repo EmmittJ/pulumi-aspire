@@ -26,15 +26,11 @@ public static class PulumiNativeAdoptionExtensions
     /// </summary>
     /// <typeparam name="T">The native compute environment resource type.</typeparam>
     /// <param name="builder">The native environment resource builder (for example the result of
-    /// <c>AddAzureContainerAppEnvironment</c>, <c>AddAzureAppServiceEnvironment</c>,
-    /// <c>AddKubernetesEnvironment</c>, or
-    /// <c>AddDockerComposeEnvironment</c>).</param>
+    /// <c>AddAzureContainerAppEnvironment</c> or <c>AddAzureAppServiceEnvironment</c>).</param>
     /// <param name="selector">
     /// The data-driven selector identifying the environment's execution steps to suppress. Use the shipped
     /// well-known selectors (<see cref="PulumiStepSuppressionSelector.AzureContainerApps"/>,
-    /// <see cref="PulumiStepSuppressionSelector.AzureAppService"/>,
-    /// <see cref="PulumiStepSuppressionSelector.Kubernetes"/>,
-    /// <see cref="PulumiStepSuppressionSelector.DockerCompose"/>) for the built-in environments.
+    /// <see cref="PulumiStepSuppressionSelector.AzureAppService"/>) for the built-in environments.
     /// </param>
     /// <param name="program">
     /// The Pulumi program run for publish previews, deploys, and destroys. It receives a
