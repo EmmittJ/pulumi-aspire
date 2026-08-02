@@ -32,12 +32,14 @@ public class ProductionAdoptionEndToEndTests
             PulumiStepSuppressionSelector.AzureContainerApps);
 
         // Sandbox-only neutralization (not part of the adoption seam): no docker build/push or Azure CLI is
-        // available here. In a real deployment these steps keep running under Aspire.
+        // available here. In a real deployment these steps keep running under Aspire. Data-only matching:
+        // structural classification would re-classify the already-suppressed execution steps.
         NativePipelineStepAdoption.SuppressExecutionSteps(
             builder,
             _ => true,
             new PulumiStepSuppressionSelector
             {
+                UseStructuralClassification = false,
                 StepNamePrefixes = ["publish-azure", "print-dashboard-url-"],
                 Tags = [WellKnownPipelineTags.BuildCompute, WellKnownPipelineTags.PushContainerImage],
             });
@@ -116,6 +118,7 @@ public class ProductionAdoptionEndToEndTests
             _ => true,
             new PulumiStepSuppressionSelector
             {
+                UseStructuralClassification = false,
                 StepNames = ["pulumi-publish-aca-env-pulumi", "pulumi-destroy-aca-env-pulumi"],
                 StepNamePrefixes = ["publish-azure", "print-dashboard-url-"],
                 Tags = [WellKnownPipelineTags.BuildCompute, WellKnownPipelineTags.PushContainerImage],

@@ -15,9 +15,9 @@ namespace EmmittJ.Aspire.Hosting.Pulumi.Tests;
 /// <summary>
 /// Tests for the one-line Azure adoption entry point
 /// (<see cref="PulumiAzureEnvironmentExtensions.PublishAsPulumi{T}"/>): the suppression selector is
-/// inferred from the adopted environment's type, the translation program is defaulted, and the
-/// registry-first phase is on by default. The type names the inference pins are catalogue data — an Aspire
-/// rename must fail here with the exact diff.
+/// inferred from the adopted environment's type (falling back to structural classification for unknown
+/// Azure compute environments), the translation program is defaulted, and the registry-first phase is on
+/// by default.
 /// </summary>
 public class PulumiAzurePublishAsPulumiTests
 {
@@ -54,30 +54,37 @@ public class PulumiAzurePublishAsPulumiTests
     }
 
     [Fact]
-    public void ResolveSelector_PinsNativeEnvironmentTypeNames()
+    public void ResolveSelector_UsesPinnedSelectorsForKnownTypes_FallsBackToStructural()
     {
         var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
         var aca = builder.AddAzureContainerAppEnvironment("aca-env");
         var appService = builder.AddAzureAppServiceEnvironment("appsvc-env");
 
+        // Known environments get their belt-and-braces selectors (structural classification plus the
+        // catalogued names/tags); anything else adopts with structural classification alone, so a new
+        // Azure compute environment works without a library update.
         Assert.Same(
             PulumiStepSuppressionSelector.AzureContainerApps,
             PulumiAzureEnvironmentExtensions.ResolveSelector(aca.Resource));
         Assert.Same(
             PulumiStepSuppressionSelector.AzureAppService,
             PulumiAzureEnvironmentExtensions.ResolveSelector(appService.Resource));
+        Assert.Same(
+            PulumiStepSuppressionSelector.Structural,
+            PulumiAzureEnvironmentExtensions.ResolveSelector(new UnknownAzureComputeEnvironmentResource("custom-env")));
     }
 
     [Fact]
-    public void PublishAsPulumi_UnknownAzureEnvironment_ThrowsActionableError()
+    public void PublishAsPulumi_UnknownAzureEnvironment_AdoptsWithStructuralClassification()
     {
         var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
         var environment = builder.AddResource(new UnknownAzureComputeEnvironmentResource("custom-env"));
 
-        var exception = Assert.Throws<NotSupportedException>(() => environment.PublishAsPulumi());
-        Assert.Contains("custom-env", exception.Message);
-        Assert.Contains("PulumiStepSuppressionSelector", exception.Message);
-        Assert.Empty(builder.Resources.OfType<PulumiEnvironmentResource>());
+        environment.PublishAsPulumi();
+
+        var pulumiEnvironment = Assert.Single(builder.Resources.OfType<PulumiEnvironmentResource>());
+        Assert.Equal("custom-env-pulumi", pulumiEnvironment.Name);
+        Assert.Same(environment.Resource, pulumiEnvironment.AdoptedEnvironment);
     }
 
     [Fact]
@@ -86,7 +93,7 @@ public class PulumiAzurePublishAsPulumiTests
         var builder = DistributedApplication.CreateBuilder([]);
         var environment = builder.AddResource(new UnknownAzureComputeEnvironmentResource("custom-env"));
 
-        // Run mode must never fail selector inference: local development stays untouched.
+        // Run mode stays a no-op: local development is untouched.
         environment.PublishAsPulumi();
 
         Assert.Empty(builder.Resources.OfType<PulumiEnvironmentResource>());

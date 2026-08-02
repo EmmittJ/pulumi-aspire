@@ -103,4 +103,92 @@ public class NativeEnvironmentStepCatalogueTests
             ],
             suppressed);
     }
+
+    [Fact]
+    public async Task StructuralClassification_ReproducesPinnedSuppressionSet_AzureContainerApps()
+    {
+        var builder = PipelineSpikeHarness.CreatePublishBuilder(out _);
+        builder.AddAzureContainerAppEnvironment("aca-env");
+        builder.AddContainer("web", "nginx:latest").WithHttpEndpoint(targetPort: 80);
+
+        using var app = builder.Build();
+        var model = app.Services.GetRequiredService<DistributedApplicationModel>();
+        var azureEnvironment = model.Resources.Single(r => r.GetType().Name == "AzureEnvironmentResource");
+        var registry = model.Resources.Single(r => r.GetType().Name == "AzureContainerRegistryResource");
+
+        string[] expected =
+        [
+            "create-provisioning-context",
+            $"destroy-azure-{azureEnvironment.Name}",
+            $"login-to-acr-{registry.Name}",
+            "provision-aca-env",
+            $"provision-{registry.Name}",
+            "provision-azure-bicep-resources",
+            "validate-azure-login",
+        ];
+
+        await AssertStructuralAndDataSuppressionSetsMatch(app, PulumiStepSuppressionSelector.AzureContainerApps, expected);
+    }
+
+    [Fact]
+    public async Task StructuralClassification_ReproducesPinnedSuppressionSet_AzureAppService()
+    {
+        var builder = PipelineSpikeHarness.CreatePublishBuilder(out _);
+        builder.AddAzureAppServiceEnvironment("appsvc-env");
+        builder.AddContainer("web", "nginx:latest").WithHttpEndpoint(targetPort: 80);
+
+        using var app = builder.Build();
+        var model = app.Services.GetRequiredService<DistributedApplicationModel>();
+        var azureEnvironment = model.Resources.Single(r => r.GetType().Name == "AzureEnvironmentResource");
+        var registry = model.Resources.Single(r => r.GetType().Name == "AzureContainerRegistryResource");
+
+        string[] expected =
+        [
+            "create-provisioning-context",
+            $"destroy-azure-{azureEnvironment.Name}",
+            $"login-to-acr-{registry.Name}",
+            "provision-appsvc-env",
+            $"provision-{registry.Name}",
+            "provision-azure-bicep-resources",
+            "validate-azure-login",
+        ];
+
+        await AssertStructuralAndDataSuppressionSetsMatch(app, PulumiStepSuppressionSelector.AzureAppService, expected);
+    }
+
+    /// <summary>
+    /// The stability invariant behind structural classification: on the real pipeline graphs, the purely
+    /// structural selector (public well-known steps/tags/interfaces only, zero provider strings) must
+    /// classify exactly the same execution steps as the legacy pinned name/tag data — and exactly the
+    /// pinned expected set. If an Aspire version bump moves either signal, this fails with the exact diff.
+    /// </summary>
+    private static async Task AssertStructuralAndDataSuppressionSetsMatch(
+        DistributedApplication app,
+        PulumiStepSuppressionSelector pinnedSelector,
+        string[] expected)
+    {
+        var model = app.Services.GetRequiredService<DistributedApplicationModel>();
+        var dataOnlySelector = pinnedSelector with { UseStructuralClassification = false };
+
+        var structural = new List<string>();
+        var dataOnly = new List<string>();
+        foreach (var resource in model.Resources)
+        {
+            foreach (var step in await PipelineSpikeHarness.ResolveStepsAsync(app, resource))
+            {
+                if (PulumiStepSuppressionSelector.Structural.Matches(step, resource))
+                {
+                    structural.Add(step.Name);
+                }
+
+                if (dataOnlySelector.Matches(step, resource))
+                {
+                    dataOnly.Add(step.Name);
+                }
+            }
+        }
+
+        Assert.Equal(expected, structural.Order().ToArray());
+        Assert.Equal(expected, dataOnly.Order().ToArray());
+    }
 }

@@ -26,7 +26,9 @@ public static class PulumiAzureEnvironmentExtensions
     /// <list type="bullet">
     /// <item>The step-suppression selector is inferred from the adopted environment's type
     /// (<see cref="PulumiStepSuppressionSelector.AzureContainerApps"/> /
-    /// <see cref="PulumiStepSuppressionSelector.AzureAppService"/>) — no selector to pick.</item>
+    /// <see cref="PulumiStepSuppressionSelector.AzureAppService"/>, falling back to
+    /// <see cref="PulumiStepSuppressionSelector.Structural"/> for any other Azure compute environment) —
+    /// no selector to pick.</item>
     /// <item>The Pulumi program defaults to
     /// <see cref="PulumiAzureAdoptionExtensions.TranslateAzureEnvironmentAsync"/>, translating the
     /// provisioning model Aspire already materialized into Pulumi azure-native resources.</item>
@@ -62,10 +64,6 @@ public static class PulumiAzureEnvironmentExtensions
     /// suppression filters, or replacing the registry phase).
     /// </para>
     /// </remarks>
-    /// <exception cref="NotSupportedException">
-    /// The adopted environment is not one of the recognized native Azure compute environments, so no
-    /// suppression selector can be inferred.
-    /// </exception>
     public static IResourceBuilder<T> PublishAsPulumi<T>(
         this IResourceBuilder<T> builder,
         AzureAdoptionOptions? options = null,
@@ -93,9 +91,13 @@ public static class PulumiAzureEnvironmentExtensions
 
     /// <summary>
     /// Infers the pipeline-step suppression selector from the adopted environment's type hierarchy. The
-    /// type names are pinned strings for the same reason the selectors are pinned data: the environment
-    /// packages are not referenced here (consumers pull in only the one they use), and an Aspire rename
-    /// must fail the catalogue tests with the exact diff instead of silently suppressing nothing.
+    /// recognized environments get their pinned belt-and-braces selectors (structural classification plus
+    /// the catalogued names/tags, so either signal alone suffices); every other
+    /// <see cref="IAzureComputeEnvironmentResource"/> falls back to
+    /// <see cref="PulumiStepSuppressionSelector.Structural"/>, which classifies execution steps by public
+    /// pipeline contracts alone — new Azure environments adopt without a library update. The type names are
+    /// pinned strings because the environment packages are not referenced here (consumers pull in only the
+    /// one they use).
     /// </summary>
     internal static PulumiStepSuppressionSelector ResolveSelector(IAzureComputeEnvironmentResource environment)
     {
@@ -112,10 +114,6 @@ public static class PulumiAzureEnvironmentExtensions
             }
         }
 
-        throw new NotSupportedException(
-            $"Cannot infer the pipeline-step suppression selector for the Azure compute environment " +
-            $"'{environment.Name}' of type '{environment.GetType()}'. Only the native Azure Container Apps " +
-            "and Azure App Service environments are recognized. Use the PublishAsPulumi overload that " +
-            "takes an explicit PulumiStepSuppressionSelector and Pulumi program instead.");
+        return PulumiStepSuppressionSelector.Structural;
     }
 }

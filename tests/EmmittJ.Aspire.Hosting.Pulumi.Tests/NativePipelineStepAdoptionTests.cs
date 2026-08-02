@@ -1,6 +1,8 @@
 // Licensed under the MIT License.
 
 #pragma warning disable ASPIREPIPELINES001 // Pipeline APIs are experimental
+#pragma warning disable ASPIREPIPELINES002 // Pipeline tag APIs are experimental
+#pragma warning disable ASPIRECOMPUTE003  // IContainerRegistry is experimental
 
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
@@ -14,7 +16,7 @@ namespace EmmittJ.Aspire.Hosting.Pulumi.Tests;
 
 /// <summary>
 /// Tests for the production adopt-and-traverse primitives promoted from the native-adoption spike
-/// (docs/spikes/native-environment-step-adoption.md): the data-driven suppression selector and the
+/// (docs/spikes/native-environment-step-adoption.md): the structural-first suppression selector and the
 /// wrap-at-builder-time step suppression.
 /// </summary>
 public class NativePipelineStepAdoptionTests
@@ -23,6 +25,15 @@ public class NativePipelineStepAdoptionTests
     {
         Name = name,
         Action = _ => Task.CompletedTask,
+        Tags = [.. tags],
+    };
+
+    private static PipelineStep CreateStep(string name, string[] dependsOn, string[] requiredBy, params string[] tags) => new()
+    {
+        Name = name,
+        Action = _ => Task.CompletedTask,
+        DependsOnSteps = [.. dependsOn],
+        RequiredBySteps = [.. requiredBy],
         Tags = [.. tags],
     };
 
@@ -44,11 +55,80 @@ public class NativePipelineStepAdoptionTests
     }
 
     [Fact]
+    public void StructuralSelector_ClassifiesByPublicContracts_NotStepNames()
+    {
+        var selector = PulumiStepSuppressionSelector.Structural;
+
+        // Execution steps match purely by structure (edge shapes taken from the real catalogued graphs):
+        // the provisioning tag...
+        Assert.True(selector.Matches(CreateStep("any-provision", [], [], WellKnownPipelineTags.ProvisionInfrastructure)));
+        // ...deploy-slot execution work (depends on deploy-prereq)...
+        Assert.True(selector.Matches(CreateStep("any-login", [WellKnownPipelineSteps.DeployPrereq], [WellKnownPipelineSteps.Deploy])));
+        // ...and teardown (either destroy edge).
+        Assert.True(selector.Matches(CreateStep("any-teardown", [WellKnownPipelineSteps.DestroyPrereq], [])));
+        Assert.True(selector.Matches(CreateStep("any-teardown", [], [WellKnownPipelineSteps.Destroy])));
+
+        // Modeling and cosmetic steps never match: prepare (before-start), publish, and printers that merely
+        // hang off the deploy aggregate (required-by only, no deploy-prereq dependency).
+        Assert.False(selector.Matches(CreateStep("any-prepare", [], [WellKnownPipelineSteps.BeforeStart])));
+        Assert.False(selector.Matches(CreateStep("any-publish", [WellKnownPipelineSteps.PublishPrereq], [WellKnownPipelineSteps.Publish])));
+        Assert.False(selector.Matches(CreateStep("print-dashboard-url", ["provision-azure-bicep-resources"], [WellKnownPipelineSteps.Deploy], "print-summary")));
+    }
+
+    [Fact]
+    public void StructuralSelector_RegistryLoginSeam_RequiresRegistryOwner()
+    {
+        var selector = PulumiStepSuppressionSelector.Structural;
+        var login = CreateStep("some-registry-login", [], [WellKnownPipelineSteps.PushPrereq]);
+
+        // A push-prereq step owned by a container registry is the login seam the Pulumi registry phase
+        // replaces; the same step owned by anything else keeps running.
+        Assert.True(selector.Matches(login, new TestContainerRegistryResource("acr")));
+        Assert.False(selector.Matches(login, new TestResource("not-a-registry")));
+        Assert.False(selector.Matches(login, owner: null));
+    }
+
+    [Fact]
+    public void Selector_KeepRules_AlwaysWin()
+    {
+        var selector = new PulumiStepSuppressionSelector
+        {
+            StepNames = ["kept-by-name"],
+            Tags = ["provision-infra"],
+            KeepStepNames = ["kept-by-name"],
+            KeepStepNamePrefixes = ["kept-prefix-"],
+            KeepTags = ["kept-tag"],
+        };
+
+        // Keep rules override both the data lists and structural classification.
+        Assert.False(selector.Matches(CreateStep("kept-by-name")));
+        Assert.False(selector.Matches(CreateStep("kept-prefix-provision", "provision-infra")));
+        Assert.False(selector.Matches(CreateStep("some-step", "provision-infra", "kept-tag")));
+        Assert.False(selector.Matches(CreateStep("kept-prefix-teardown", [WellKnownPipelineSteps.DestroyPrereq], [])));
+        Assert.True(selector.Matches(CreateStep("other-step", "provision-infra")));
+    }
+
+    [Fact]
+    public void Selector_UseStructuralClassificationFalse_MatchesDataOnly()
+    {
+        var selector = new PulumiStepSuppressionSelector
+        {
+            UseStructuralClassification = false,
+            StepNames = ["exact-step"],
+        };
+
+        Assert.True(selector.Matches(CreateStep("exact-step")));
+        Assert.False(selector.Matches(CreateStep("any-provision", [], [], WellKnownPipelineTags.ProvisionInfrastructure)));
+        Assert.False(selector.Matches(CreateStep("any-login", [WellKnownPipelineSteps.DeployPrereq], [WellKnownPipelineSteps.Deploy])));
+    }
+
+    [Fact]
     public void AzureContainerAppsSelector_SuppressesExecution_KeepsModeling()
     {
         var selector = PulumiStepSuppressionSelector.AzureContainerApps;
 
-        // Execution steps (from the pinned catalogue) must match.
+        // Execution steps (from the pinned catalogue) must match — by pinned name/tag data alone, even
+        // without their structural edges, so either signal suffices (belt-and-braces).
         Assert.True(selector.Matches(CreateStep("validate-azure-login")));
         Assert.True(selector.Matches(CreateStep("create-provisioning-context")));
         Assert.True(selector.Matches(CreateStep("provision-azure-bicep-resources", "provision-infra")));

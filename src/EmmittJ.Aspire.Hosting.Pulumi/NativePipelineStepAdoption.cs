@@ -38,11 +38,23 @@ public static class NativePipelineStepAdoption
     /// </summary>
     /// <param name="builder">The distributed application builder.</param>
     /// <param name="resourceFilter">Selects the adopted native resources whose step annotations are wrapped.</param>
-    /// <param name="selector">The data-driven selector identifying the execution steps to suppress.</param>
+    /// <param name="selector">The selector identifying the execution steps to suppress.</param>
     public static void SuppressExecutionSteps(
         IDistributedApplicationBuilder builder,
         Func<IResource, bool> resourceFilter,
         PulumiStepSuppressionSelector selector)
+        => SuppressExecutionSteps(builder, resourceFilter, selector, tracker: null);
+
+    /// <summary>
+    /// Core suppression used by <c>PublishAsPulumi</c>: additionally records every no-op clone in
+    /// <paramref name="tracker"/> so the configuration-time adoption guard can distinguish suppressed steps
+    /// from execution steps that escaped suppression.
+    /// </summary>
+    internal static void SuppressExecutionSteps(
+        IDistributedApplicationBuilder builder,
+        Func<IResource, bool> resourceFilter,
+        PulumiStepSuppressionSelector selector,
+        PulumiStepSuppressionTracker? tracker)
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(resourceFilter);
@@ -50,6 +62,7 @@ public static class NativePipelineStepAdoption
 
         foreach (var resource in builder.Resources.Where(resourceFilter))
         {
+            var owner = resource;
             var originals = resource.Annotations.OfType<PipelineStepAnnotation>().ToList();
             foreach (var original in originals)
             {
@@ -57,7 +70,17 @@ public static class NativePipelineStepAdoption
                 resource.Annotations.Add(new PipelineStepAnnotation(async factoryContext =>
                 {
                     var steps = await original.CreateStepsAsync(factoryContext).ConfigureAwait(false);
-                    return steps.Select(step => selector.Matches(step) ? CloneAsNoOp(step) : step).ToList();
+                    return steps.Select(step =>
+                    {
+                        if (!selector.Matches(step, owner))
+                        {
+                            return step;
+                        }
+
+                        var clone = CloneAsNoOp(step);
+                        tracker?.RecordSuppressed(clone);
+                        return clone;
+                    }).ToList();
                 }));
             }
         }

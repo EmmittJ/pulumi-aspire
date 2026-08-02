@@ -1,8 +1,10 @@
 // Licensed under the MIT License.
 
 #pragma warning disable ASPIRECOMPUTE002 // IComputeEnvironmentResource is experimental
+#pragma warning disable ASPIREPIPELINES001 // Pipeline APIs are experimental
 
 using Aspire.Hosting.ApplicationModel;
+using Aspire.Hosting.Pipelines;
 using EmmittJ.Aspire.Hosting.Pulumi;
 
 // Extension methods that operate on IResourceBuilder live in the Aspire.Hosting namespace so they are
@@ -28,9 +30,11 @@ public static class PulumiEnvironmentExtensions
     /// <param name="builder">The native environment resource builder (for example the result of
     /// <c>AddAzureContainerAppEnvironment</c> or <c>AddAzureAppServiceEnvironment</c>).</param>
     /// <param name="selector">
-    /// The data-driven selector identifying the environment's execution steps to suppress. Use the shipped
-    /// well-known selectors (<see cref="PulumiStepSuppressionSelector.AzureContainerApps"/>,
-    /// <see cref="PulumiStepSuppressionSelector.AzureAppService"/>) for the built-in environments.
+    /// The selector identifying the environment's execution steps to suppress. Use
+    /// <see cref="PulumiStepSuppressionSelector.Structural"/> to classify steps by public pipeline contracts
+    /// alone, or the shipped well-known selectors
+    /// (<see cref="PulumiStepSuppressionSelector.AzureContainerApps"/>,
+    /// <see cref="PulumiStepSuppressionSelector.AzureAppService"/>) for the built-in Azure environments.
     /// </param>
     /// <param name="program">
     /// The Pulumi program run for publish previews, deploys, and destroys. It receives a
@@ -60,7 +64,10 @@ public static class PulumiEnvironmentExtensions
     /// <para>
     /// In run mode this is a no-op: the local <c>aspire run</c> experience is untouched. In publish mode the
     /// suppression happens immediately (at builder time), so call this after the native environment — and any
-    /// resources it implicitly adds — is on the builder; step annotations added later are not wrapped.
+    /// resources it implicitly adds — is on the builder; step annotations added later are not wrapped. A
+    /// configuration-time guard backstops that ordering contract: if an execution step of an adopted resource
+    /// escapes suppression (for example, an integration registered later), the pipeline fails with an
+    /// actionable error instead of silently provisioning or destroying infrastructure alongside Pulumi.
     /// </para>
     /// <para>
     /// ⚠️ For Azure Container Apps, suppressing the <c>login-to-acr-*</c> step means the Pulumi environment
@@ -99,16 +106,21 @@ public static class PulumiEnvironmentExtensions
 
         applicationBuilder.AddPulumiInfrastructureCore();
 
-        NativePipelineStepAdoption.SuppressExecutionSteps(
-            applicationBuilder,
-            suppressionResourceFilter ?? (_ => true),
-            selector);
+        // The Pulumi integration's own steps are never suppression targets: exclude Pulumi environments (for
+        // example, one adopted earlier for a sibling native environment) regardless of the user's filter.
+        var userFilter = suppressionResourceFilter ?? (_ => true);
+        Func<IResource, bool> resourceFilter = resource => resource is not PulumiEnvironmentResource && userFilter(resource);
+
+        var tracker = new PulumiStepSuppressionTracker();
+        NativePipelineStepAdoption.SuppressExecutionSteps(applicationBuilder, resourceFilter, selector, tracker);
 
         var environment = new PulumiEnvironmentResource($"{builder.Resource.Name}-pulumi", builder.Resource, program)
         {
             RegistryPhase = registryPhase,
         };
-        var environmentBuilder = applicationBuilder.AddResource(environment);
+        var environmentBuilder = applicationBuilder.AddResource(environment)
+            .WithAnnotation(new PipelineConfigurationAnnotation(context =>
+                PulumiAdoptionGuard.Validate(context, environment, selector, resourceFilter, tracker)));
         configureEnvironment?.Invoke(environmentBuilder);
 
         return builder;

@@ -322,16 +322,6 @@ public class PulumiNativeAdoptionTests
         ReportingStep = new NoOpReportingStep(),
     };
 
-    /// <summary>A minimal native compute environment stand-in for adoption tests.</summary>
-    private sealed class TestComputeEnvironmentResource(string name) : Resource(name), IComputeEnvironmentResource;
-
-    /// <summary>A minimal container registry stand-in for registry-phase tests.</summary>
-    private sealed class TestContainerRegistryResource(string name) : Resource(name), IContainerRegistry
-    {
-        ReferenceExpression IContainerRegistry.Name => ReferenceExpression.Create($"{Name}");
-        ReferenceExpression IContainerRegistry.Endpoint => ReferenceExpression.Create($"{Name}.example.io");
-    }
-
     private sealed class NoOpReportingStep : IReportingStep
     {
         public Task<IReportingTask> CreateTaskAsync(string description, CancellationToken cancellationToken = default)
