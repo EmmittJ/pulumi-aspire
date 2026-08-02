@@ -6,6 +6,7 @@
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Pipelines;
 using EmmittJ.Aspire.Hosting.Pulumi;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 // Extension methods that operate on IResourceBuilder live in the Aspire.Hosting namespace so they are
 // discoverable without an extra using, matching the official Aspire integrations. The resource types remain
@@ -104,7 +105,8 @@ public static class PulumiEnvironmentExtensions
                 "Call 'PublishAsPulumi' at most once per environment.");
         }
 
-        applicationBuilder.AddPulumiInfrastructureCore();
+        // The runner is shared by every Pulumi environment; registration is idempotent.
+        applicationBuilder.Services.TryAddSingleton<PulumiRunner>();
 
         // The Pulumi integration's own steps are never suppression targets: exclude Pulumi environments (for
         // example, one adopted earlier for a sibling native environment) regardless of the user's filter.

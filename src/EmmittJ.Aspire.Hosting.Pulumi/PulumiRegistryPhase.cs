@@ -54,8 +54,8 @@ public sealed class PulumiRegistryPhase
     /// <summary>
     /// Gets or sets the callback that authenticates Docker to a provisioned registry after
     /// <see cref="Program"/> deploys. Invoked once per distinct registry the adopted environment attached
-    /// to its deployment targets. Use the <see cref="PulumiContainerRegistryHelpers"/> factories for the
-    /// common CLI-based logins.
+    /// to its deployment targets (the Azure package's <c>CreateAzureRegistryPhase</c> supplies an
+    /// <c>az acr login</c> callback).
     /// </summary>
     public Func<PipelineStepContext, IContainerRegistry, Task>? LoginCallback { get; set; }
 }

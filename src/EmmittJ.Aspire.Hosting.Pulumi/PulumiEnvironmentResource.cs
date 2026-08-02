@@ -196,19 +196,13 @@ public sealed class PulumiEnvironmentResource : Resource
             return;
         }
 
-        var logger = context.Services.GetRequiredService<ILoggerFactory>().CreateLogger<PulumiEnvironmentResource>();
-        var runner = context.Services.GetRequiredService<PulumiRunner>();
-        var stackName = ResolveStackName(context.Services);
-
-        var task = await context.ReportingStep.CreateTaskAsync(
-            $"Generating Pulumi preview for **{Name}**", context.CancellationToken).ConfigureAwait(false);
-
-        await using (task.ConfigureAwait(false))
-        {
-            try
+        await RunStepAsync(
+            context,
+            PulumiProjectName,
+            $"Generating Pulumi preview for **{Name}**",
+            async (stack, logger) =>
             {
-                var result = await runner.ForStack(PulumiProjectName, stackName)
-                    .WithWorkDir(WorkingDirectory)
+                var result = await stack
                     .PreviewAsync(() => RunProgramAsync(context, PulumiOperation.Preview, logger), context.CancellationToken)
                     .ConfigureAwait(false);
 
@@ -217,103 +211,54 @@ public sealed class PulumiEnvironmentResource : Resource
                 var artifactPath = Path.Combine(outputDirectory, $"pulumi-{Name}-preview.txt");
                 await File.WriteAllTextAsync(artifactPath, result.StandardOutput, context.CancellationToken).ConfigureAwait(false);
 
-                await task.CompleteAsync(
-                    $"Wrote Pulumi preview for **{Name}** to `{artifactPath}`.",
-                    CompletionState.Completed,
-                    context.CancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                await task.CompleteAsync(ex.Message, CompletionState.CompletedWithError, context.CancellationToken).ConfigureAwait(false);
-                throw;
-            }
-        }
+                return $"Wrote Pulumi preview for **{Name}** to `{artifactPath}`.";
+            }).ConfigureAwait(false);
     }
 
-    private async Task DeployAsync(PipelineStepContext context)
-    {
-        var logger = context.Services.GetRequiredService<ILoggerFactory>().CreateLogger<PulumiEnvironmentResource>();
-        var runner = context.Services.GetRequiredService<PulumiRunner>();
-        var stackName = ResolveStackName(context.Services);
-
-        var task = await context.ReportingStep.CreateTaskAsync(
-            $"Deploying **{Name}** with the Pulumi Automation API", context.CancellationToken).ConfigureAwait(false);
-
-        await using (task.ConfigureAwait(false))
-        {
-            try
+    private Task DeployAsync(PipelineStepContext context) =>
+        RunStepAsync(
+            context,
+            PulumiProjectName,
+            $"Deploying **{Name}** with the Pulumi Automation API",
+            async (stack, logger) =>
             {
-                var result = await runner.ForStack(PulumiProjectName, stackName)
-                    .WithWorkDir(WorkingDirectory)
+                var result = await stack
                     .UpAsync(() => RunProgramAsync(context, PulumiOperation.Up, logger), context.CancellationToken)
                     .ConfigureAwait(false);
 
                 _lastOutputs = result.Outputs.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Value?.ToString());
 
-                await task.CompleteAsync(
-                    $"Deployed **{Name}** successfully.",
-                    CompletionState.Completed,
-                    context.CancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex)
+                return $"Deployed **{Name}** successfully.";
+            });
+
+    private Task DestroyAsync(PipelineStepContext context) =>
+        RunStepAsync(
+            context,
+            PulumiProjectName,
+            $"Destroying resources in **{Name}**",
+            async (stack, logger) =>
             {
-                await task.CompleteAsync(ex.Message, CompletionState.CompletedWithError, context.CancellationToken).ConfigureAwait(false);
-                throw;
-            }
-        }
-    }
-
-    private async Task DestroyAsync(PipelineStepContext context)
-    {
-        var logger = context.Services.GetRequiredService<ILoggerFactory>().CreateLogger<PulumiEnvironmentResource>();
-        var runner = context.Services.GetRequiredService<PulumiRunner>();
-        var stackName = ResolveStackName(context.Services);
-
-        var task = await context.ReportingStep.CreateTaskAsync(
-            $"Destroying resources in **{Name}**", context.CancellationToken).ConfigureAwait(false);
-
-        await using (task.ConfigureAwait(false))
-        {
-            try
-            {
-                await runner.ForStack(PulumiProjectName, stackName)
-                    .WithWorkDir(WorkingDirectory)
+                await stack
                     .DestroyAsync(() => RunProgramAsync(context, PulumiOperation.Destroy, logger), context.CancellationToken)
                     .ConfigureAwait(false);
 
-                await task.CompleteAsync(
-                    $"Destroyed resources in **{Name}**.",
-                    CompletionState.Completed,
-                    context.CancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                await task.CompleteAsync(ex.Message, CompletionState.CompletedWithError, context.CancellationToken).ConfigureAwait(false);
-                throw;
-            }
-        }
-    }
+                return $"Destroyed resources in **{Name}**.";
+            });
 
-    private async Task DeployRegistryAsync(PipelineStepContext context)
+    private Task DeployRegistryAsync(PipelineStepContext context)
     {
         if (RegistryPhase is not { } phase)
         {
-            return;
+            return Task.CompletedTask;
         }
 
-        var logger = context.Services.GetRequiredService<ILoggerFactory>().CreateLogger<PulumiEnvironmentResource>();
-        var runner = context.Services.GetRequiredService<PulumiRunner>();
-        var stackName = ResolveStackName(context.Services);
-
-        var task = await context.ReportingStep.CreateTaskAsync(
-            $"Provisioning the container registry for **{Name}** with Pulumi", context.CancellationToken).ConfigureAwait(false);
-
-        await using (task.ConfigureAwait(false))
-        {
-            try
+        return RunStepAsync(
+            context,
+            RegistryProjectName,
+            $"Provisioning the container registry for **{Name}** with Pulumi",
+            async (stack, logger) =>
             {
-                await runner.ForStack(RegistryProjectName, stackName)
-                    .WithWorkDir(WorkingDirectory)
+                await stack
                     .UpAsync(() => RunProgramAsync(context, PulumiOperation.Up, logger, phase.Program), context.CancellationToken)
                     .ConfigureAwait(false);
 
@@ -326,46 +271,55 @@ public sealed class PulumiEnvironmentResource : Resource
                     }
                 }
 
-                await task.CompleteAsync(
-                    $"Container registry for **{Name}** provisioned.",
-                    CompletionState.Completed,
-                    context.CancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                await task.CompleteAsync(ex.Message, CompletionState.CompletedWithError, context.CancellationToken).ConfigureAwait(false);
-                throw;
-            }
-        }
+                return $"Container registry for **{Name}** provisioned.";
+            });
     }
 
-    private async Task DestroyRegistryAsync(PipelineStepContext context)
+    private Task DestroyRegistryAsync(PipelineStepContext context)
     {
         if (RegistryPhase is not { } phase)
         {
-            return;
+            return Task.CompletedTask;
         }
 
+        return RunStepAsync(
+            context,
+            RegistryProjectName,
+            $"Destroying the container registry stack for **{Name}**",
+            async (stack, logger) =>
+            {
+                await stack
+                    .DestroyAsync(() => RunProgramAsync(context, PulumiOperation.Destroy, logger, phase.Program), context.CancellationToken)
+                    .ConfigureAwait(false);
+
+                return $"Container registry stack for **{Name}** destroyed.";
+            });
+    }
+
+    /// <summary>
+    /// Shared step scaffolding for every spliced Pulumi step: resolves the runner and stack name, wraps the
+    /// operation in a reporting task, and completes it with the operation's success message (or the error).
+    /// </summary>
+    private async Task RunStepAsync(
+        PipelineStepContext context,
+        string projectName,
+        string taskTitle,
+        Func<PulumiStackRunner, ILogger, Task<string>> operation)
+    {
         var logger = context.Services.GetRequiredService<ILoggerFactory>().CreateLogger<PulumiEnvironmentResource>();
         var runner = context.Services.GetRequiredService<PulumiRunner>();
         var stackName = ResolveStackName(context.Services);
 
-        var task = await context.ReportingStep.CreateTaskAsync(
-            $"Destroying the container registry stack for **{Name}**", context.CancellationToken).ConfigureAwait(false);
+        var task = await context.ReportingStep.CreateTaskAsync(taskTitle, context.CancellationToken).ConfigureAwait(false);
 
         await using (task.ConfigureAwait(false))
         {
             try
             {
-                await runner.ForStack(RegistryProjectName, stackName)
-                    .WithWorkDir(WorkingDirectory)
-                    .DestroyAsync(() => RunProgramAsync(context, PulumiOperation.Destroy, logger, phase.Program), context.CancellationToken)
-                    .ConfigureAwait(false);
+                var stack = runner.ForStack(projectName, stackName).WithWorkDir(WorkingDirectory);
+                var successMessage = await operation(stack, logger).ConfigureAwait(false);
 
-                await task.CompleteAsync(
-                    $"Container registry stack for **{Name}** destroyed.",
-                    CompletionState.Completed,
-                    context.CancellationToken).ConfigureAwait(false);
+                await task.CompleteAsync(successMessage, CompletionState.Completed, context.CancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
             {

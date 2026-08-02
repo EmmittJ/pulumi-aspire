@@ -205,10 +205,6 @@ internal sealed partial class BicepExpressionTranslator(
         {
             case "resourceGroup" when arguments.Length == 0:
                 return ResourceGroupAccess.Instance;
-            case "subscription" when arguments.Length == 0:
-                return SubscriptionAccess.Instance;
-            case "tenant" when arguments.Length == 0:
-                return TenantAccess.Instance;
             case "uniqueString":
                 return ApplyStrings(arguments, static values => ArmFunctions.UniqueString(values));
             case "guid":
@@ -289,16 +285,6 @@ internal sealed partial class BicepExpressionTranslator(
     private sealed class ResourceGroupAccess
     {
         public static readonly ResourceGroupAccess Instance = new();
-    }
-
-    private sealed class SubscriptionAccess
-    {
-        public static readonly SubscriptionAccess Instance = new();
-    }
-
-    private sealed class TenantAccess
-    {
-        public static readonly TenantAccess Instance = new();
     }
 }
 

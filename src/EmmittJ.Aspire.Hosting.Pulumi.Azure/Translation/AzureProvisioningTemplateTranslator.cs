@@ -48,11 +48,9 @@ internal sealed class AzureProvisioningTemplateTranslator
     /// </summary>
     /// <param name="context">The shared translation context.</param>
     /// <param name="resource">The Aspire resource carrying the template (environment or deployment target).</param>
-    /// <param name="templateName">The name to group the translated resources under.</param>
     public static async Task<TranslatedAzureTemplate> TranslateAsync(
         AzureTranslationContext context,
-        AzureBicepResource resource,
-        string? templateName = null)
+        AzureBicepResource resource)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(resource);
@@ -65,7 +63,7 @@ internal sealed class AzureProvisioningTemplateTranslator
                 "Wrap it in an AzureProvisioningResource, or provision it out-of-band.");
         }
 
-        var translator = new AzureProvisioningTemplateTranslator(context, templateName ?? resource.Name, resource);
+        var translator = new AzureProvisioningTemplateTranslator(context, resource.Name, resource);
         var translated = await translator.TranslateCoreAsync(provisioning).ConfigureAwait(false);
         context.RegisterTemplate(resource, translated);
         return translated;

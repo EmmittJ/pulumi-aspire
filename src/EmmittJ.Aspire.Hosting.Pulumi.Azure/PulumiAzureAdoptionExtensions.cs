@@ -1,9 +1,14 @@
 // Licensed under the MIT License.
 
 #pragma warning disable ASPIRECOMPUTE001 // compute-resource APIs are experimental
+#pragma warning disable ASPIREPIPELINES001 // Pipeline APIs are experimental
+#pragma warning disable ASPIRECOMPUTE003  // IContainerRegistry is experimental
 
+using System.ComponentModel;
+using System.Diagnostics;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Azure;
+using Aspire.Hosting.Pipelines;
 using EmmittJ.Aspire.Hosting.Pulumi.Azure;
 using Microsoft.Extensions.Logging;
 using Pulumi;
@@ -93,8 +98,66 @@ public static class PulumiAzureAdoptionExtensions
     public static PulumiRegistryPhase CreateAzureRegistryPhase(AzureAdoptionOptions? options = null) =>
         new(context => context.TranslateAzureRegistriesAsync(options))
         {
-            LoginCallback = PulumiContainerRegistryHelpers.CreateAzureCliLoginCallback(),
+            LoginCallback = AzureCliAcrLoginAsync,
         };
+
+    /// <summary>
+    /// Authenticates Docker to an Azure Container Registry by running
+    /// <c>az acr login --name {registryName}</c>. Requires the Azure CLI to be installed and logged in.
+    /// </summary>
+    private static async Task AzureCliAcrLoginAsync(PipelineStepContext context, IContainerRegistry registry)
+    {
+        var registryName = await registry.Name.GetValueAsync(context.CancellationToken).ConfigureAwait(false);
+
+        if (string.IsNullOrEmpty(registryName))
+        {
+            throw new InvalidOperationException(
+                "Registry name not available. Ensure the registry is provisioned before the login step runs.");
+        }
+
+        context.Logger.LogInformation("Logging in to Azure Container Registry '{RegistryName}'.", registryName);
+
+        // On Windows the Azure CLI is a .cmd shim, which needs cmd.exe when UseShellExecute is false
+        // (required for stdout/stderr redirection).
+        var useShellWrapper = OperatingSystem.IsWindows();
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = useShellWrapper ? "cmd.exe" : "az",
+            Arguments = useShellWrapper ? $"/c az acr login --name {registryName}" : $"acr login --name {registryName}",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        using var process = new Process { StartInfo = startInfo };
+
+        try
+        {
+            process.Start();
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 2) // ERROR_FILE_NOT_FOUND
+        {
+            throw new InvalidOperationException(
+                "Azure CLI ('az') is not installed or not found in PATH. Install it from https://aka.ms/installazurecli and run 'az login'.",
+                ex);
+        }
+
+        var outputTask = process.StandardOutput.ReadToEndAsync(context.CancellationToken);
+        var errorTask = process.StandardError.ReadToEndAsync(context.CancellationToken);
+        await process.WaitForExitAsync(context.CancellationToken).ConfigureAwait(false);
+        var output = await outputTask.ConfigureAwait(false);
+        var error = await errorTask.ConfigureAwait(false);
+
+        if (!string.IsNullOrWhiteSpace(output))
+        {
+            context.Logger.LogDebug("Azure CLI output: {Output}", output);
+        }
+
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"Azure ACR login failed with exit code {process.ExitCode}. Error: {error}");
+        }
+    }
 }
 
 /// <summary>

@@ -32,7 +32,6 @@ public sealed class PulumiStackRunner
     private readonly string _projectName;
     private readonly string _stackName;
     private string? _workDir;
-    private Func<WorkspaceStack, CancellationToken, Task>? _configure;
 
     internal PulumiStackRunner(string projectName, string stackName)
     {
@@ -50,15 +49,6 @@ public sealed class PulumiStackRunner
             _workDir = workDir;
         }
 
-        return this;
-    }
-
-    /// <summary>
-    /// Sets a callback that configures the stack (for example provider config) before the operation runs.
-    /// </summary>
-    public PulumiStackRunner WithConfiguration(Func<WorkspaceStack, CancellationToken, Task> configure)
-    {
-        _configure = configure;
         return this;
     }
 
@@ -108,19 +98,12 @@ public sealed class PulumiStackRunner
         Func<Task<IDictionary<string, object?>>> program,
         CancellationToken cancellationToken)
     {
-        var stack = await LocalWorkspace.CreateOrSelectStackAsync(
+        return await LocalWorkspace.CreateOrSelectStackAsync(
             new InlineProgramArgs(_projectName, _stackName, PulumiFn.Create(program))
             {
                 WorkDir = GetWorkDir()
             },
             cancellationToken).ConfigureAwait(false);
-
-        if (_configure is not null)
-        {
-            await _configure(stack, cancellationToken).ConfigureAwait(false);
-        }
-
-        return stack;
     }
 
     private string GetWorkDir()
