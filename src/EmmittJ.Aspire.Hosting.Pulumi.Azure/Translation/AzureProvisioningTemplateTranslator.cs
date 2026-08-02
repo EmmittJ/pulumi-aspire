@@ -23,8 +23,9 @@ namespace EmmittJ.Aspire.Hosting.Pulumi.Azure;
 /// <see cref="AzureNativeResource"/> (or a <c>get*</c> invoke for <c>existing</c> declarations), grouped
 /// under one component resource per template so previews read per-Aspire-resource,</item>
 /// <item>translates the template outputs into live Pulumi outputs and back-propagates their deployed
-/// values into <see cref="AzureBicepResource.Outputs"/> so Aspire's <see cref="BicepOutputReference"/>s
-/// resolve without a provisioning context.</item>
+/// values into <see cref="AzureBicepResource.Outputs"/>, completing the resource's
+/// <see cref="AzureBicepResource.ProvisioningTaskCompletionSource"/> once the last value lands so
+/// Aspire's <see cref="BicepOutputReference"/>s resolve without a provisioning context.</item>
 /// </list>
 /// </summary>
 internal sealed class AzureProvisioningTemplateTranslator
@@ -107,7 +108,9 @@ internal sealed class AzureProvisioningTemplateTranslator
         }
 
         var outputs = new Dictionary<string, Output<string>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var output in constructs.OfType<ProvisioningOutput>())
+        var provisioningOutputs = constructs.OfType<ProvisioningOutput>().ToList();
+        var pendingBackPropagations = provisioningOutputs.Count;
+        foreach (var output in provisioningOutputs)
         {
             var name = output.BicepIdentifier;
             var value = expressionTranslator.AsStringOutput(
@@ -117,15 +120,30 @@ internal sealed class AzureProvisioningTemplateTranslator
             {
                 // Back-propagate deployed values into Aspire's output dictionary so BicepOutputReference
                 // resolution works without a provisioning context. The applies run because the caller
-                // registers every template output as a stack output.
+                // registers every template output as a stack output. Once the last output lands, the
+                // provisioning gate is released: BicepOutputReference.GetValueAsync awaits
+                // ProvisioningTaskCompletionSource before reading Outputs, and the native provision step
+                // that would normally complete it was suppressed in favour of this translation.
                 value = value.Apply(v =>
                 {
                     _bicepResource.Outputs[name] = v;
+                    if (Interlocked.Decrement(ref pendingBackPropagations) == 0)
+                    {
+                        _bicepResource.ProvisioningTaskCompletionSource?.TrySetResult();
+                    }
+
                     return v;
                 });
             }
 
             outputs[name] = value;
+        }
+
+        if (!_context.UseDeterministicPlaceholders && provisioningOutputs.Count == 0)
+        {
+            // No outputs to back-propagate: release the provisioning gate as soon as the template's
+            // resources are declared so BicepOutputReference-free consumers never dangle.
+            _bicepResource.ProvisioningTaskCompletionSource?.TrySetResult();
         }
 
         return new TranslatedAzureTemplate(_templateName, component, resources, outputs);

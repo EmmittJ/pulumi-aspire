@@ -191,19 +191,24 @@ public class AzureAdoptionTranslationTests
         using (app)
         {
             // Phase 1: the registry-first phase deploys the registry stack. Awaiting the exported outputs
-            // forces the back-propagation applies that fill the registry resource's Aspire outputs.
+            // forces the back-propagation applies that fill the registry resource's Aspire outputs and
+            // complete its provisioning gate.
             var registryMocks = new RecordingMocks();
+            AzureTranslationContext? registryTranslation = null;
             await Deployment.TestAsync(
                 registryMocks,
                 new TestOptions { IsPreview = false, ProjectName = "adoption-test-registry", StackName = "test" },
-                async () => await adoption.TranslateAzureRegistriesAsync(new AzureAdoptionOptions { Location = "westus2" }));
+                async () => registryTranslation = await adoption.TranslateAzureRegistriesAsync(new AzureAdoptionOptions { Location = "westus2" }));
             foreach (var output in adoption.Outputs.Values)
             {
                 await global::Pulumi.Utilities.OutputUtilities.GetValueAsync(output);
             }
 
-            var registryTemplate = Assert.Single(adoption.GetContainerRegistries().OfType<AzureBicepResource>());
+            Assert.NotNull(registryTranslation);
+            var registryTemplate = Assert.Single(registryTranslation!.Templates.Keys);
             Assert.NotEmpty(registryTemplate.Outputs);
+            Assert.NotNull(registryTemplate.ProvisioningTaskCompletionSource);
+            Assert.True(registryTemplate.ProvisioningTaskCompletionSource!.Task.IsCompletedSuccessfully);
 
             // Phase 2: the main deploy excludes the registry template the phase owns; its outputs feed the
             // remaining templates' parameters through the back-propagated values (up mode fails fast on

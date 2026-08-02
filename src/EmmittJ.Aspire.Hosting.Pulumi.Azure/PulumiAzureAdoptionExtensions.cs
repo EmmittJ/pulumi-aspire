@@ -174,10 +174,28 @@ internal sealed class AzureEnvironmentTranslation(PulumiAdoptionContext context,
 
     /// <summary>
     /// Collects the distinct Bicep-backed container registries the adopted environment attached to its
-    /// deployment targets — the templates the registry-first phase owns.
+    /// deployment targets — the templates the registry-first phase owns. Native Azure environments (for
+    /// example Azure Container Apps) attach <em>themselves</em> as the deployment target's registry and
+    /// delegate the registry surface to their implicit Azure Container Registry resource, so compute
+    /// environments are unwrapped to that resource — the registry phase must own only the registry
+    /// template, never the whole environment.
     /// </summary>
-    private HashSet<AzureBicepResource> CollectRegistryTemplates() =>
-        [.. context.GetContainerRegistries().OfType<AzureBicepResource>()];
+    private HashSet<AzureBicepResource> CollectRegistryTemplates()
+    {
+        var templates = new HashSet<AzureBicepResource>();
+        foreach (var registry in context.GetContainerRegistries())
+        {
+            var resolved = registry is IAzureComputeEnvironmentResource { ContainerRegistry: { } actual }
+                ? actual
+                : registry;
+            if (resolved is AzureBicepResource bicep)
+            {
+                templates.Add(bicep);
+            }
+        }
+
+        return templates;
+    }
 
     private async Task<AzureTranslationContext> TranslateAsync(List<AzureBicepResource> templates, string resourceGroupName)
     {
