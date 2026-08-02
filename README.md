@@ -81,7 +81,7 @@ aspire deploy
 
 ## 🏗️ Architecture
 
-Pulumi Aspire uses an **adopt-and-traverse** model: Aspire's native compute environment keeps modeling the application (deployment targets, container registries, Bicep templates), while `PublishAsPulumi` suppresses the environment's native execution steps and splices Pulumi-driven publish/deploy/destroy steps into the Aspire pipeline. The Azure package translates the adopted environment's Bicep templates into Pulumi azure-native resources.
+Pulumi Aspire uses an **adopt-and-traverse** model: Aspire's native compute environment keeps modeling the application (deployment targets, container registries, Bicep templates), while `PublishAsPulumi` suppresses the environment's native execution steps and splices Pulumi-driven publish/deploy/destroy steps into the Aspire pipeline. Execution steps are recognized *structurally* — by Aspire's public well-known pipeline tags and deploy/destroy graph edges rather than per-version step names — and a configuration-time guard fails the pipeline if one escapes suppression, so adoption stays stable across Aspire versions. The Azure package translates the adopted environment's Bicep templates into Pulumi azure-native resources.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the implementation details and extension points.
 

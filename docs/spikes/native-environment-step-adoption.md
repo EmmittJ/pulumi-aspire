@@ -181,6 +181,14 @@ still running**, observing a half-materialized model. Adding `before-start` to t
 The step names/tags are the fragile part: they are undocumented strings. The catalogue tests in the spike
 project pin them so an Aspire version bump fails CI with the exact diff instead of silently deploying twice.
 
+> ℹ️ **Production follow-up:** the shipped `PulumiStepSuppressionSelector` has since moved to *structural*
+> classification by default — execution steps are recognized by public contracts (`WellKnownPipelineTags.ProvisionInfrastructure`,
+> `deploy-prereq`/`destroy` edges, registry-owned `push-prereq` steps) instead of the pinned strings, with the
+> name/tag data kept as belt-and-braces and the catalogue tests pinning that both signals classify the exact
+> same set on the real ACA/App Service graphs. A configuration-time guard additionally fails the pipeline if
+> an execution step escapes suppression. The K8s/Compose steps below (`check-helm-prereqs` declares no edges)
+> would still need data selectors — one more reason those frontends stay deferred.
+
 ## 🚀 Recommendation
 
 **Go.** Proceed with:
