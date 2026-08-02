@@ -8,9 +8,9 @@ namespace EmmittJ.Aspire.Hosting.Pulumi;
 
 /// <summary>
 /// A data-driven selector that identifies which native pipeline steps are <em>execution</em> steps
-/// (provisioning, CLI logins, deploys, destroys) to be suppressed when a Pulumi backend adopts a native
+/// (provisioning, CLI logins, deploys, destroys) to be suppressed when a Pulumi environment adopts a native
 /// Aspire compute environment. Modeling steps (prepare/publish) never match and keep running so the native
-/// environment fully materializes the provisioning model the Pulumi backend walks.
+/// environment fully materializes the provisioning model the Pulumi environment walks.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -37,7 +37,7 @@ public sealed record PulumiStepSuppressionSelector
     /// creation, Bicep provisioning, ACR login, and destroy.
     /// </summary>
     /// <remarks>
-    /// ⚠️ Suppressing <c>acr-login</c> means the Pulumi backend must supply registry credentials before
+    /// ⚠️ Suppressing <c>acr-login</c> means the Pulumi environment must supply registry credentials before
     /// Aspire's push step runs (the one native behavior that is replaced rather than merely skipped).
     /// </remarks>
     public static PulumiStepSuppressionSelector AzureContainerApps { get; } = new()
@@ -57,14 +57,14 @@ public sealed record PulumiStepSuppressionSelector
     /// </summary>
     /// <remarks>
     /// <para>
-    /// ⚠️ Suppressing <c>acr-login</c> means the Pulumi backend must supply registry credentials before
+    /// ⚠️ Suppressing <c>acr-login</c> means the Pulumi environment must supply registry credentials before
     /// Aspire's push step runs (the one native behavior that is replaced rather than merely skipped).
     /// </para>
     /// <para>
     /// ⚠️ App Service only materializes <c>DeploymentTargetAnnotation</c>s for project resources and
     /// containers with a Dockerfile build (<c>AddDockerfile</c>/<c>WithDockerfile</c>); plain image
     /// containers are silently skipped by the native prepare step and never appear in
-    /// <see cref="PulumiAdoptionContext.GetDeploymentTargets"/>.
+    /// <see cref="PulumiPublishingContext.GetDeploymentTargets"/>.
     /// </para>
     /// </remarks>
     public static PulumiStepSuppressionSelector AzureAppService { get; } = new()

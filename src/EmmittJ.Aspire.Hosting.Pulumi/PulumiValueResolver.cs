@@ -9,13 +9,12 @@ namespace EmmittJ.Aspire.Hosting.Pulumi;
 
 /// <summary>
 /// Resolves Aspire structured values (parameters, connection strings, endpoint references, reference
-/// expressions, Pulumi outputs) into Pulumi <see cref="Output{T}"/> values, tracking whether the value is
+/// expressions) into Pulumi <see cref="Output{T}"/> values, tracking whether the value is
 /// secret. Secret-bearing values are wrapped with <see cref="Output.CreateSecret{T}(T)"/> so they are
 /// encrypted in Pulumi state instead of being inlined as plaintext.
 /// </summary>
 /// <remarks>
-/// This is the shared value-resolution engine used by both the provider-specific compute contexts
-/// (<see cref="PulumiComputeResourceContext"/>) and the adopt-and-translate pipeline. Endpoint resolution
+/// This is the shared value-resolution engine used by the Pulumi translation pipeline. Endpoint resolution
 /// is platform-specific, so callers that expect endpoint references supply the
 /// <see cref="EndpointResolver"/>/<see cref="EndpointExpressionResolver"/> hooks; without them an endpoint
 /// value fails with an actionable error.
@@ -86,14 +85,6 @@ public sealed class PulumiValueResolver
             {
                 var resolved = await resourceWithConnectionString.GetValueAsync(_cancellationToken).ConfigureAwait(false) ?? string.Empty;
                 return new(Output.CreateSecret(resolved), IsSecret: true);
-            }
-
-            case PulumiOutputReference outputReference:
-            {
-                // The reference resolves to its deferred string value, which the environment populates from the
-                // deployed stack outputs. Output references are not secret-bearing on their own.
-                var resolved = await outputReference.GetValueAsync(_cancellationToken).ConfigureAwait(false) ?? string.Empty;
-                return new(Output.Create(resolved), IsSecret: false);
             }
 
             case ReferenceExpression referenceExpression:

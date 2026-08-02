@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging;
 namespace EmmittJ.Aspire.Hosting.Pulumi;
 
 /// <summary>
-/// Suppresses the execution pipeline steps of a native Aspire compute environment so a Pulumi backend can
+/// Suppresses the execution pipeline steps of a native Aspire compute environment so a Pulumi environment can
 /// splice its own steps into the same slots while the native prepare/publish phases keep materializing the
 /// provisioning model.
 /// </summary>
@@ -80,7 +80,7 @@ public static class NativePipelineStepAdoption
             Action = context =>
             {
                 context.Logger.LogDebug(
-                    "Skipped native pipeline step '{StepName}': its execution is owned by the Pulumi backend.",
+                    "Skipped native pipeline step '{StepName}': its execution is owned by the Pulumi environment.",
                     step.Name);
                 return Task.CompletedTask;
             },

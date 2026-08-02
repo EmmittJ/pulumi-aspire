@@ -38,7 +38,7 @@ public static class PulumiAzureAdoptionExtensions
     /// invokes and fail fast on unresolvable values.
     /// </para>
     /// <para>
-    /// When the backend has a registry-first phase (<see cref="PulumiBackendResource.RegistryPhase"/>), the
+    /// When the environment has a registry-first phase (<see cref="PulumiEnvironmentResource.RegistryPhase"/>), the
     /// container registry templates that phase owns are excluded here so the same ARM resources are not
     /// managed by two stacks. Their outputs still feed deployment-target parameters: the registry phase's
     /// <c>up</c> back-propagates the deployed values into the registry resource's outputs, which the
@@ -46,7 +46,7 @@ public static class PulumiAzureAdoptionExtensions
     /// </para>
     /// </remarks>
     public static Task<AzureTranslationContext> TranslateAzureEnvironmentAsync(
-        this PulumiAdoptionContext context,
+        this PulumiPublishingContext context,
         AzureAdoptionOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -56,7 +56,7 @@ public static class PulumiAzureAdoptionExtensions
     /// <summary>
     /// Translates only the adopted Azure environment's container registry templates into Pulumi
     /// azure-native resources — the program body for the registry-first phase
-    /// (<see cref="PulumiBackendResource.RegistryPhase"/>), which provisions the registry into its own
+    /// (<see cref="PulumiEnvironmentResource.RegistryPhase"/>), which provisions the registry into its own
     /// stack before Aspire's push step runs. Exports each template's outputs as stack outputs
     /// (<c>{template}_{output}</c>, plus <c>resourceGroupName</c>); exporting is load-bearing: it roots the
     /// applies that back-propagate the deployed values into the registry resource's outputs, which is what
@@ -72,7 +72,7 @@ public static class PulumiAzureAdoptionExtensions
     /// The translation context, exposing the translated templates and their live outputs for post-processing.
     /// </returns>
     public static Task<AzureTranslationContext> TranslateAzureRegistriesAsync(
-        this PulumiAdoptionContext context,
+        this PulumiPublishingContext context,
         AzureAdoptionOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -102,7 +102,7 @@ public static class PulumiAzureAdoptionExtensions
 /// their <see cref="BicepOutputReference"/> parameter edges, and drives
 /// <see cref="AzureProvisioningTemplateTranslator"/> over each.
 /// </summary>
-internal sealed class AzureEnvironmentTranslation(PulumiAdoptionContext context, AzureAdoptionOptions options)
+internal sealed class AzureEnvironmentTranslation(PulumiPublishingContext context, AzureAdoptionOptions options)
 {
     public async Task<AzureTranslationContext> RunAsync()
     {
@@ -127,7 +127,7 @@ internal sealed class AzureEnvironmentTranslation(PulumiAdoptionContext context,
         // not managed by two stacks. Their BicepOutputReference parameters resolve through the value
         // resolver instead: the registry phase's up back-propagated the deployed values into the registry
         // resource's outputs (previews substitute placeholders).
-        var excluded = context.Backend.RegistryPhase is null
+        var excluded = context.Environment.RegistryPhase is null
             ? []
             : CollectRegistryTemplates();
 
@@ -139,7 +139,7 @@ internal sealed class AzureEnvironmentTranslation(PulumiAdoptionContext context,
                 "model to translate: no Bicep-backed deployment targets are attached and the environment " +
                 "itself is not an Azure resource. TranslateAzureEnvironmentAsync only supports native Azure " +
                 "environments (for example AddAzureContainerAppEnvironment); make sure the native prepare " +
-                "steps ran before the Pulumi program (the backend's deploy step depends on 'before-start' " +
+                "steps ran before the Pulumi program (the environment's deploy step depends on 'before-start' " +
                 "for exactly this reason).");
         }
 

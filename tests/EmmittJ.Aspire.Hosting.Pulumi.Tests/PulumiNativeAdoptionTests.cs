@@ -16,13 +16,13 @@ using Xunit;
 namespace EmmittJ.Aspire.Hosting.Pulumi.Tests;
 
 /// <summary>
-/// Tests for the adopt-and-traverse decorator (<c>PublishAsPulumi</c>) and the generic
-/// <see cref="PulumiBackendResource"/> it registers.
+/// Tests for the adopt-and-traverse decorator (<c>PublishAsPulumi</c>) and the
+/// <see cref="PulumiEnvironmentResource"/> it registers.
 /// </summary>
 public class PulumiNativeAdoptionTests
 {
     [Fact]
-    public void PublishAsPulumi_InPublishMode_AddsBackendResource()
+    public void PublishAsPulumi_InPublishMode_AddsPulumiEnvironmentResource()
     {
         var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
         var environment = builder.AddResource(new TestComputeEnvironmentResource("native-env"));
@@ -31,10 +31,25 @@ public class PulumiNativeAdoptionTests
             new PulumiStepSuppressionSelector { Tags = ["provision-infra"] },
             _ => Task.CompletedTask);
 
-        var backend = Assert.Single(builder.Resources.OfType<PulumiBackendResource>());
-        Assert.Equal("native-env-pulumi", backend.Name);
-        Assert.Same(environment.Resource, backend.AdoptedEnvironment);
-        Assert.Equal("native-env-pulumi", backend.PulumiProjectName);
+        var pulumiEnvironment = Assert.Single(builder.Resources.OfType<PulumiEnvironmentResource>());
+        Assert.Equal("native-env-pulumi", pulumiEnvironment.Name);
+        Assert.Same(environment.Resource, pulumiEnvironment.AdoptedEnvironment);
+        Assert.Equal("native-env-pulumi", pulumiEnvironment.PulumiProjectName);
+    }
+
+    [Fact]
+    public void PublishAsPulumi_ConfigureEnvironment_AppliesWithStackName()
+    {
+        var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
+        var environment = builder.AddResource(new TestComputeEnvironmentResource("native-env"));
+
+        environment.PublishAsPulumi(
+            new PulumiStepSuppressionSelector { Tags = ["provision-infra"] },
+            _ => Task.CompletedTask,
+            configureEnvironment: env => env.WithStackName("prod-eu"));
+
+        var pulumiEnvironment = Assert.Single(builder.Resources.OfType<PulumiEnvironmentResource>());
+        Assert.Equal("prod-eu", pulumiEnvironment.StackNameOverride);
     }
 
     [Fact]
@@ -49,8 +64,8 @@ public class PulumiNativeAdoptionTests
             PulumiStepSuppressionSelector.AzureContainerApps,
             _ => Task.CompletedTask);
 
-        // Local development stays untouched: no backend resource, no wrapped annotations.
-        Assert.Empty(builder.Resources.OfType<PulumiBackendResource>());
+        // Local development stays untouched: no Pulumi environment resource, no wrapped annotations.
+        Assert.Empty(builder.Resources.OfType<PulumiEnvironmentResource>());
         Assert.Equal(annotationsBefore, environment.Resource.Annotations.Count);
     }
 
@@ -107,7 +122,7 @@ public class PulumiNativeAdoptionTests
     }
 
     [Fact]
-    public async Task BackendResource_RegistersExpectedLifecycleSteps()
+    public async Task PulumiEnvironment_RegistersExpectedLifecycleSteps()
     {
         var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
         var environment = builder.AddResource(new TestComputeEnvironmentResource("native-env"));
@@ -115,8 +130,8 @@ public class PulumiNativeAdoptionTests
         environment.PublishAsPulumi(PulumiStepSuppressionSelector.AzureContainerApps, _ => Task.CompletedTask);
 
         using var app = builder.Build();
-        var backend = builder.Resources.OfType<PulumiBackendResource>().Single();
-        var steps = await ResolveStepsAsync(app, backend);
+        var pulumiEnvironment = builder.Resources.OfType<PulumiEnvironmentResource>().Single();
+        var steps = await ResolveStepsAsync(app, pulumiEnvironment);
 
         var publish = steps.Single(s => s.Name == "pulumi-publish-native-env-pulumi");
         Assert.Contains(WellKnownPipelineSteps.PublishPrereq, publish.DependsOnSteps);
@@ -137,7 +152,7 @@ public class PulumiNativeAdoptionTests
     }
 
     [Fact]
-    public void AdoptionContext_GetDeploymentTargets_ReturnsTargetsForAdoptedEnvironmentOnly()
+    public void PublishingContext_GetDeploymentTargets_ReturnsTargetsForAdoptedEnvironmentOnly()
     {
         var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
         var environment = builder.AddResource(new TestComputeEnvironmentResource("native-env"));
@@ -159,11 +174,11 @@ public class PulumiNativeAdoptionTests
         });
 
         using var app = builder.Build();
-        var backend = builder.Resources.OfType<PulumiBackendResource>().Single();
+        var pulumiEnvironment = builder.Resources.OfType<PulumiEnvironmentResource>().Single();
 
-        var context = new PulumiAdoptionContext(
+        var context = new PulumiPublishingContext(
             app.Services.GetRequiredService<DistributedApplicationModel>(),
-            backend,
+            pulumiEnvironment,
             PulumiOperation.Preview,
             app.Services.GetRequiredService<DistributedApplicationExecutionContext>(),
             app.Services,
@@ -176,21 +191,21 @@ public class PulumiNativeAdoptionTests
     }
 
     [Fact]
-    public void BackendResource_StackName_UsesOverrideThenAspireEnvironment()
+    public void PulumiEnvironment_StackName_UsesOverrideThenAspireEnvironment()
     {
         var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
         var environment = builder.AddResource(new TestComputeEnvironmentResource("native-env"));
         environment.PublishAsPulumi(PulumiStepSuppressionSelector.AzureContainerApps, _ => Task.CompletedTask);
 
         using var app = builder.Build();
-        var backend = builder.Resources.OfType<PulumiBackendResource>().Single();
+        var pulumiEnvironment = builder.Resources.OfType<PulumiEnvironmentResource>().Single();
 
-        backend.StackNameOverride = "prod";
-        Assert.Equal("prod", backend.ResolveStackName(app.Services));
+        pulumiEnvironment.StackNameOverride = "prod";
+        Assert.Equal("prod", pulumiEnvironment.ResolveStackName(app.Services));
     }
 
     [Fact]
-    public async Task BackendResource_WithoutRegistryPhase_RegistersNoRegistrySteps()
+    public async Task PulumiEnvironment_WithoutRegistryPhase_RegistersNoRegistrySteps()
     {
         var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
         var environment = builder.AddResource(new TestComputeEnvironmentResource("native-env"));
@@ -198,15 +213,15 @@ public class PulumiNativeAdoptionTests
         environment.PublishAsPulumi(PulumiStepSuppressionSelector.AzureContainerApps, _ => Task.CompletedTask);
 
         using var app = builder.Build();
-        var backend = builder.Resources.OfType<PulumiBackendResource>().Single();
-        var steps = await ResolveStepsAsync(app, backend);
+        var pulumiEnvironment = builder.Resources.OfType<PulumiEnvironmentResource>().Single();
+        var steps = await ResolveStepsAsync(app, pulumiEnvironment);
 
         Assert.DoesNotContain(steps, s => s.Name.StartsWith("pulumi-deploy-registry-", StringComparison.Ordinal));
         Assert.DoesNotContain(steps, s => s.Name.StartsWith("pulumi-destroy-registry-", StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task BackendResource_WithRegistryPhase_RegistersPinnedRegistrySteps()
+    public async Task PulumiEnvironment_WithRegistryPhase_RegistersPinnedRegistrySteps()
     {
         var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
         var environment = builder.AddResource(new TestComputeEnvironmentResource("native-env"));
@@ -217,11 +232,11 @@ public class PulumiNativeAdoptionTests
             registryPhase: new PulumiRegistryPhase(_ => Task.CompletedTask));
 
         using var app = builder.Build();
-        var backend = builder.Resources.OfType<PulumiBackendResource>().Single();
-        Assert.NotNull(backend.RegistryPhase);
-        Assert.Equal("native-env-pulumi-registry", backend.RegistryProjectName);
+        var pulumiEnvironment = builder.Resources.OfType<PulumiEnvironmentResource>().Single();
+        Assert.NotNull(pulumiEnvironment.RegistryPhase);
+        Assert.Equal("native-env-pulumi-registry", pulumiEnvironment.RegistryProjectName);
 
-        var steps = await ResolveStepsAsync(app, backend);
+        var steps = await ResolveStepsAsync(app, pulumiEnvironment);
 
         var deployRegistry = steps.Single(s => s.Name == "pulumi-deploy-registry-native-env-pulumi");
         // The registry must exist (and Docker be logged in) before Aspire's push step runs; before-start
@@ -239,7 +254,7 @@ public class PulumiNativeAdoptionTests
     }
 
     [Fact]
-    public void AdoptionContext_GetContainerRegistries_ReturnsDistinctAdoptedRegistries()
+    public void PublishingContext_GetContainerRegistries_ReturnsDistinctAdoptedRegistries()
     {
         var builder = DistributedApplication.CreateBuilder(["--operation", "publish"]);
         var environment = builder.AddResource(new TestComputeEnvironmentResource("native-env"));
@@ -262,11 +277,11 @@ public class PulumiNativeAdoptionTests
         });
 
         using var app = builder.Build();
-        var backend = builder.Resources.OfType<PulumiBackendResource>().Single();
+        var pulumiEnvironment = builder.Resources.OfType<PulumiEnvironmentResource>().Single();
 
-        var context = new PulumiAdoptionContext(
+        var context = new PulumiPublishingContext(
             app.Services.GetRequiredService<DistributedApplicationModel>(),
-            backend,
+            pulumiEnvironment,
             PulumiOperation.Up,
             app.Services.GetRequiredService<DistributedApplicationExecutionContext>(),
             app.Services,

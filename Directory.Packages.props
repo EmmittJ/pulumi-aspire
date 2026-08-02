@@ -9,13 +9,12 @@
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.4.6" />
     <PackageVersion Include="Aspire.Hosting.JavaScript" Version="13.4.6" />
     <PackageVersion Include="Aspire.Hosting.Yarp" Version="13.4.6" />
-    <!-- Native Aspire compute environments (spike: native-environment step adoption) -->
+    <!-- Native Aspire compute environments (adopted by the Pulumi integration) -->
     <PackageVersion Include="Aspire.Hosting.Azure.AppContainers" Version="13.4.6" />
     <PackageVersion Include="Aspire.Hosting.Azure.AppService" Version="13.4.6" />
     <!-- Pulumi -->
     <PackageVersion Include="Pulumi.Automation" Version="3.107.2" />
     <PackageVersion Include="Pulumi.AzureNative" Version="3.19.0" />
-    <PackageVersion Include="Pulumi.Random" Version="4.21.0" />
     <!-- Testing -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />
     <PackageVersion Include="xunit.v3" Version="3.2.2" />

@@ -105,8 +105,8 @@ public class AzureAdoptionTranslationTests
         var environment = builder.AddResource(new TestComputeEnvironmentResource("native-env"));
         using var app = builder.Build();
 
-        var backend = new PulumiBackendResource("native-env-pulumi", environment.Resource, _ => Task.CompletedTask);
-        var adoption = new PulumiAdoptionContext(
+        var backend = new PulumiEnvironmentResource("native-env-pulumi", environment.Resource, _ => Task.CompletedTask);
+        var adoption = new PulumiPublishingContext(
             app.Services.GetRequiredService<DistributedApplicationModel>(),
             backend,
             PulumiOperation.Preview,
@@ -167,8 +167,8 @@ public class AzureAdoptionTranslationTests
         var environment = builder.AddResource(new TestComputeEnvironmentResource("native-env"));
         using var app = builder.Build();
 
-        var backend = new PulumiBackendResource("native-env-pulumi", environment.Resource, _ => Task.CompletedTask);
-        var adoption = new PulumiAdoptionContext(
+        var backend = new PulumiEnvironmentResource("native-env-pulumi", environment.Resource, _ => Task.CompletedTask);
+        var adoption = new PulumiPublishingContext(
             app.Services.GetRequiredService<DistributedApplicationModel>(),
             backend,
             PulumiOperation.Up,
@@ -232,11 +232,11 @@ public class AzureAdoptionTranslationTests
     /// <summary>
     /// Runs the publish pipeline for an ACA environment + one container in-process so the native prepare
     /// steps attach the Bicep-backed deployment targets, then wraps the materialized model in a
-    /// <see cref="PulumiAdoptionContext"/> for the frontend under test. Execution steps are suppressed with
+    /// <see cref="PulumiPublishingContext"/> for the frontend under test. Execution steps are suppressed with
     /// the production selector; build/push and azure-publish steps are neutralized because the sandbox has
     /// no docker or Azure CLI.
     /// </summary>
-    private static async Task<(DistributedApplication App, PulumiAdoptionContext Adoption, string OutputPath)> MaterializeAcaModelAsync(
+    private static async Task<(DistributedApplication App, PulumiPublishingContext Adoption, string OutputPath)> MaterializeAcaModelAsync(
         PulumiOperation operation,
         PulumiRegistryPhase? registryPhase = null)
     {
@@ -268,11 +268,11 @@ public class AzureAdoptionTranslationTests
         var pipeline = app.Services.GetRequiredService<IDistributedApplicationPipeline>();
         await pipeline.ExecuteAsync(new PipelineContext(model, executionContext, app.Services, NullLogger.Instance, CancellationToken.None));
 
-        var backend = new PulumiBackendResource("aca-env-pulumi", environment.Resource, _ => Task.CompletedTask)
+        var backend = new PulumiEnvironmentResource("aca-env-pulumi", environment.Resource, _ => Task.CompletedTask)
         {
             RegistryPhase = registryPhase,
         };
-        var adoption = new PulumiAdoptionContext(
+        var adoption = new PulumiPublishingContext(
             model, backend, operation, executionContext, app.Services, NullLogger.Instance, CancellationToken.None);
         return (app, adoption, outputPath);
     }

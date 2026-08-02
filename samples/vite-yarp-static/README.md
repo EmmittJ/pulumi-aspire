@@ -21,7 +21,7 @@ flowchart LR
 
 - **AddViteApp**: Vite-based frontend application
 - **AddYarp**: Reverse proxy with dual-mode routing
-- **AddPulumiAzureContainerAppEnvironment**: Azure Container Apps deployment via Pulumi
+- **PublishAsPulumi**: Azure Container Apps environment deployed via Pulumi
 - **PublishWithStaticFiles**: Automatic static file serving in production
 
 ## Prerequisites
@@ -65,10 +65,14 @@ builder.AddYarp("app")
     .PublishWithStaticFiles(frontend); // Publish: serve static files
 ```
 
-**Pulumi Azure Container Apps Environment** - Deploys to Azure Container Apps:
+**Pulumi-Managed Azure Container Apps Environment** - Aspire models the environment, Pulumi deploys it:
 ```csharp
-builder.AddPulumiAzureContainerAppEnvironment("dev", "vite-yarp-static")
-    .WithLocation("eastus");
+var azureOptions = new AzureAdoptionOptions { Location = "eastus" };
+builder.AddAzureContainerAppEnvironment("vite-yarp-static")
+    .PublishAsPulumi(
+        PulumiStepSuppressionSelector.AzureContainerApps,
+        context => context.TranslateAzureEnvironmentAsync(azureOptions),
+        registryPhase: PulumiAzureAdoptionExtensions.CreateAzureRegistryPhase(azureOptions));
 ```
 
 ## Sample Outputs

@@ -130,7 +130,7 @@ public class ProductionAdoptionEndToEndTests
             Assert.Contains("target:web:web-containerapp", walked);
 
             var backend = app.Services.GetRequiredService<DistributedApplicationModel>()
-                .Resources.OfType<PulumiBackendResource>().Single();
+                .Resources.OfType<PulumiEnvironmentResource>().Single();
             Assert.Equal("web-containerapp", backend.LastOutputs["web-target"]);
         }
         finally

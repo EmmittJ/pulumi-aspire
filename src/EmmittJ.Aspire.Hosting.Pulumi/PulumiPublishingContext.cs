@@ -1,32 +1,34 @@
 // Licensed under the MIT License.
 
 #pragma warning disable ASPIRECOMPUTE001 // GetComputeResources / compute-resource APIs are experimental
+#pragma warning disable ASPIRECOMPUTE002 // IComputeEnvironmentResource is experimental
+#pragma warning disable ASPIRECOMPUTE003 // IContainerRegistry is experimental
 
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using Microsoft.Extensions.Logging;
 using Pulumi;
-using PulumiResource = Pulumi.Resource;
 
 namespace EmmittJ.Aspire.Hosting.Pulumi;
 
 /// <summary>
-/// State shared with provider packages while the Pulumi program runs for a deploy.
+/// State shared with the user-supplied program while the Pulumi program runs for an adopted native
+/// environment.
 /// </summary>
 /// <remarks>
-/// A single instance is created per <c>pulumi up</c> and passed to
-/// <see cref="PulumiEnvironmentResource.CreateStackResourcesAsync(PulumiPublishingContext)"/>. Providers
-/// use it to enumerate the compute resources targeted to the environment, register the Pulumi resources
-/// they create (so cross-resource references resolve), and export stack outputs.
+/// A single instance is created per Pulumi operation (preview, up, destroy) and passed to the program
+/// delegate supplied to <c>PublishAsPulumi</c>. The program uses it to walk the provisioning model that the
+/// adopted native environment's modeling steps materialized (Bicep-backed deployment targets for the Azure
+/// environments) and to export stack outputs.
 /// </remarks>
 public sealed class PulumiPublishingContext
 {
-    private readonly Dictionary<IResource, PulumiResource> _translated = new(ResourceNameComparer.Instance);
     private readonly Dictionary<string, Output<string>> _outputs = [];
 
     internal PulumiPublishingContext(
         DistributedApplicationModel model,
         PulumiEnvironmentResource environment,
+        PulumiOperation operation,
         DistributedApplicationExecutionContext executionContext,
         IServiceProvider services,
         ILogger logger,
@@ -34,6 +36,7 @@ public sealed class PulumiPublishingContext
     {
         Model = model;
         Environment = environment;
+        Operation = operation;
         ExecutionContext = executionContext;
         Services = services;
         Logger = logger;
@@ -43,8 +46,18 @@ public sealed class PulumiPublishingContext
     /// <summary>Gets the distributed application model.</summary>
     public DistributedApplicationModel Model { get; }
 
-    /// <summary>Gets the Pulumi environment resource that owns this deploy.</summary>
+    /// <summary>Gets the Pulumi environment resource that owns this operation.</summary>
     public PulumiEnvironmentResource Environment { get; }
+
+    /// <summary>Gets the adopted native compute environment resource.</summary>
+    public IComputeEnvironmentResource AdoptedEnvironment => Environment.AdoptedEnvironment;
+
+    /// <summary>
+    /// Gets the Pulumi operation this program run is part of. Publish previews run as
+    /// <see cref="PulumiOperation.Preview"/> and must not require cloud credentials; deploys run as
+    /// <see cref="PulumiOperation.Up"/>.
+    /// </summary>
+    public PulumiOperation Operation { get; }
 
     /// <summary>Gets the execution context (publish/deploy) for resolving callback values.</summary>
     public DistributedApplicationExecutionContext ExecutionContext { get; }
@@ -55,20 +68,22 @@ public sealed class PulumiPublishingContext
     /// <summary>Gets the logger.</summary>
     public ILogger Logger { get; }
 
-    /// <summary>Gets the cancellation token for the deploy operation.</summary>
+    /// <summary>Gets the cancellation token for the operation.</summary>
     public CancellationToken CancellationToken { get; }
 
     /// <summary>Gets the stack outputs registered so far, keyed by output name.</summary>
     public IReadOnlyDictionary<string, Output<string>> Outputs => _outputs;
 
-    /// <summary>Gets the Pulumi resources translated so far, keyed by their source Aspire resource.</summary>
-    public IReadOnlyDictionary<IResource, PulumiResource> TranslatedResources => _translated;
-
     /// <summary>
-    /// Enumerates the compute resources that should be translated by this environment: resources that
-    /// target this environment (or no specific environment) and are not opted out of translation.
+    /// Enumerates the deployment targets that the adopted native environment's modeling steps attached to
+    /// the application model's compute resources.
     /// </summary>
-    public IEnumerable<IComputeResource> GetTargetedComputeResources()
+    /// <returns>
+    /// Each targeted compute resource paired with the <see cref="DeploymentTargetAnnotation"/> attached for
+    /// the adopted environment. For the Azure environments the annotation's target is an
+    /// <c>AzureProvisioningResource</c> exposing Bicep.
+    /// </returns>
+    public IEnumerable<(IComputeResource Compute, DeploymentTargetAnnotation Target)> GetDeploymentTargets()
     {
         foreach (var resource in Model.GetComputeResources())
         {
@@ -77,38 +92,32 @@ public sealed class PulumiPublishingContext
                 continue;
             }
 
-            if (compute.HasAnnotationOfType<SkipPulumiTranslationAnnotation>())
+            if (compute.GetDeploymentTargetAnnotation(AdoptedEnvironment) is { } annotation)
             {
-                continue;
+                yield return (compute, annotation);
             }
-
-            // Honor explicit targeting: a resource pinned to a different compute environment via
-            // WithComputeEnvironment must not be translated here. A null target means "any".
-            var target = compute.GetComputeEnvironment();
-            if (target is not null && !ReferenceEquals(target, Environment))
-            {
-                continue;
-            }
-
-            yield return compute;
         }
     }
 
-    /// <summary>Registers a translated Pulumi resource for the given Aspire resource.</summary>
-    /// <param name="aspireResource">The source Aspire resource.</param>
-    /// <param name="pulumiResource">The Pulumi resource it was translated to.</param>
-    public void RegisterTranslatedResource(IResource aspireResource, PulumiResource pulumiResource)
+    /// <summary>
+    /// Enumerates the distinct container registries the adopted native environment attached to its
+    /// deployment targets (<see cref="DeploymentTargetAnnotation.ContainerRegistry"/>), in deterministic
+    /// model order. For Azure Container Apps / App Service this is the environment's implicitly added
+    /// container registry resource.
+    /// </summary>
+    public IEnumerable<IContainerRegistry> GetContainerRegistries()
     {
-        _translated[aspireResource] = pulumiResource;
+        var seen = new HashSet<IContainerRegistry>();
+        foreach (var (_, annotation) in GetDeploymentTargets())
+        {
+            if (annotation.ContainerRegistry is { } registry && seen.Add(registry))
+            {
+                yield return registry;
+            }
+        }
     }
 
-    /// <summary>Gets a previously translated Pulumi resource, or <see langword="null"/> if not found.</summary>
-    /// <typeparam name="T">The expected Pulumi resource type.</typeparam>
-    /// <param name="aspireResource">The source Aspire resource.</param>
-    public T? GetTranslatedResource<T>(IResource aspireResource) where T : PulumiResource =>
-        _translated.TryGetValue(aspireResource, out var resource) ? resource as T : null;
-
-    /// <summary>Exports a stack output. The value is captured into <see cref="PulumiOutputReference"/> after deploy.</summary>
+    /// <summary>Exports a stack output.</summary>
     /// <param name="name">The output name.</param>
     /// <param name="value">The output value.</param>
     public void AddOutput(string name, Output<string> value) => _outputs[name] = value;

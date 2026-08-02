@@ -2,12 +2,8 @@
 
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
-using EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging.Abstractions;
-using Pulumi;
 using Xunit;
-using PulumiResource = Pulumi.Resource;
 
 namespace EmmittJ.Aspire.Hosting.Pulumi.Tests;
 
@@ -16,48 +12,50 @@ public class PulumiValueResolverTests
     [Fact]
     public async Task SecretParameter_ResolvesAsSecret_NonSecretAndStrings_DoNot()
     {
-        using var app = BuildApp(out var context);
-        var resolver = new TestComputeResourceContext(new TestComputeResource("api"), context);
+        using var app = BuildApp(out var executionContext);
+        var resolver = new PulumiValueResolver(executionContext);
 
         var secretParameter = new ParameterResource("password", _ => "p@ss", secret: true);
         var plainParameter = new ParameterResource("region", _ => "eastus", secret: false);
 
         // Secret parameters must be flagged secret (wrapped as Pulumi secrets), never inlined as plaintext.
-        Assert.True((await resolver.Resolve(secretParameter)).IsSecret);
-        Assert.False((await resolver.Resolve(plainParameter)).IsSecret);
-        Assert.False((await resolver.Resolve("literal")).IsSecret);
+        Assert.True((await resolver.ResolveAsync(secretParameter)).IsSecret);
+        Assert.False((await resolver.ResolveAsync(plainParameter)).IsSecret);
+        Assert.False((await resolver.ResolveAsync("literal")).IsSecret);
     }
 
-    private static DistributedApplication BuildApp(out PulumiPublishingContext context)
+    [Fact]
+    public async Task ReferenceExpression_WithSecretConstituent_IsSecret()
+    {
+        using var app = BuildApp(out var executionContext);
+        var resolver = new PulumiValueResolver(executionContext);
+
+        var secretParameter = new ParameterResource("password", _ => "p@ss", secret: true);
+        var composite = ReferenceExpression.Create($"conn-{secretParameter}");
+
+        // If any constituent value is secret, the whole composite must be secret.
+        Assert.True((await resolver.ResolveAsync(composite)).IsSecret);
+    }
+
+    [Fact]
+    public async Task EndpointReference_WithoutResolverHook_Throws()
+    {
+        using var app = BuildApp(out var executionContext);
+        var builder = DistributedApplication.CreateBuilder();
+        var container = builder.AddContainer("web", "nginx:latest").WithHttpEndpoint(targetPort: 80);
+        var resolver = new PulumiValueResolver(executionContext);
+
+        // Endpoint resolution is platform-specific; without a hook the resolver must fail actionably.
+        await Assert.ThrowsAsync<NotSupportedException>(
+            () => resolver.ResolveAsync(container.Resource.GetEndpoint("http")));
+    }
+
+    private static DistributedApplication BuildApp(out DistributedApplicationExecutionContext executionContext)
     {
         var builder = DistributedApplication.CreateBuilder();
         var app = builder.Build();
 
-        var model = app.Services.GetRequiredService<DistributedApplicationModel>();
-        var executionContext = app.Services.GetRequiredService<DistributedApplicationExecutionContext>();
-
-        context = new PulumiPublishingContext(
-            model,
-            new PulumiAzureContainerAppEnvironmentResource("myapp"),
-            executionContext,
-            app.Services,
-            NullLogger.Instance,
-            CancellationToken.None);
-
+        executionContext = app.Services.GetRequiredService<DistributedApplicationExecutionContext>();
         return app;
-    }
-
-    private sealed class TestComputeResource(string name) : global::Aspire.Hosting.ApplicationModel.Resource(name), IComputeResource;
-
-    private sealed class TestComputeResourceContext(IComputeResource resource, PulumiPublishingContext context)
-        : PulumiComputeResourceContext(resource, context)
-    {
-        public Task<PulumiResolvedValue> Resolve(object? value) => ResolveValueAsync(value);
-
-        protected override Task<PulumiResource> BuildComputeResourceAsync() => throw new NotSupportedException();
-
-        protected override Output<string> ResolveEndpoint(EndpointReference endpoint) => Output.Create(string.Empty);
-
-        protected override Output<string> ResolveEndpointExpression(EndpointReferenceExpression expression) => Output.Create(string.Empty);
     }
 }
