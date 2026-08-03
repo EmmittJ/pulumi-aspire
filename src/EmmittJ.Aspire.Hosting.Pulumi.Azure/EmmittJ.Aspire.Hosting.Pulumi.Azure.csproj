@@ -6,7 +6,7 @@
     <PackageTags>aspire;pulumi;azure;iac;infrastructure;cloud</PackageTags>
     <IsPackable>true</IsPackable>
     <!-- These Aspire pipeline/compute/registry APIs are still marked [Experimental]; the integration depends on them by design. -->
-    <NoWarn>$(NoWarn);ASPIREPIPELINES001;ASPIREPIPELINES003;ASPIREPIPELINES004;ASPIRECOMPUTE001;ASPIRECOMPUTE002;ASPIRECOMPUTE003</NoWarn>
+    <NoWarn>$(NoWarn);ASPIREPIPELINES001;ASPIREPIPELINES003;ASPIREPIPELINES004;ASPIRECOMPUTE001;ASPIRECOMPUTE002;ASPIRECOMPUTE003;ASPIREINTERACTION001</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

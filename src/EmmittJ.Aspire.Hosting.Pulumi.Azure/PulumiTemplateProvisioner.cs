@@ -102,19 +102,7 @@ internal sealed class PulumiTemplateProvisioner : IAzureTemplateProvisioner
         return stackOutputs;
     }
 
-    private string ResolveProjectName()
-    {
-        if (_options.ProjectName is { } explicitName)
-        {
-            return PulumiNaming.ValidateName(explicitName, nameof(PulumiProvisioningOptions.ProjectName));
-        }
+    private string ResolveProjectName() => PulumiStackNameResolver.ResolveProjectName(_options, _hostEnvironment);
 
-        var sanitized = string.Concat(_hostEnvironment.ApplicationName.Select(
-            static c => char.IsLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '-'));
-        return PulumiNaming.ValidateName(sanitized, nameof(PulumiProvisioningOptions.ProjectName));
-    }
-
-    private string ResolveStackName() => PulumiNaming.ValidateName(
-        _options.StackName ?? _hostEnvironment.EnvironmentName.ToLowerInvariant(),
-        nameof(PulumiProvisioningOptions.StackName));
+    private string ResolveStackName() => PulumiStackNameResolver.ResolveStackName(_options, _hostEnvironment);
 }

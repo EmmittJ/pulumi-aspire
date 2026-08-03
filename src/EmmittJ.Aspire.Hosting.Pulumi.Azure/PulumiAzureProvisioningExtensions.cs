@@ -30,9 +30,9 @@ public static class PulumiAzureProvisioningExtensions
     /// (interactive prompts, <c>Azure:*</c> configuration, deployment-state), so <c>aspire deploy</c>
     /// looks and feels exactly like the default experience — Pulumi replaces only the execution engine,
     /// and the resulting stack supports <c>pulumi preview</c>, <c>pulumi destroy</c>, and drift detection
-    /// out-of-band. Note that <c>aspire deploy</c>'s own destroy path deletes the resource group directly
-    /// via ARM, which leaves the Pulumi stack's state stale; prefer <c>pulumi destroy</c> followed by
-    /// <c>pulumi stack rm</c>, or refresh the stack afterwards.
+    /// out-of-band. <c>aspire destroy</c> is wired up too: a <c>destroy-pulumi-stack</c> step runs
+    /// <c>pulumi destroy</c> against the stack — destroying each resource through Pulumi and leaving the
+    /// stack's state empty — before the native destroy step deletes the resource group itself via ARM.
     /// </remarks>
     public static IDistributedApplicationBuilder UsePulumiProvisioning(
         this IDistributedApplicationBuilder builder,
@@ -52,6 +52,11 @@ public static class PulumiAzureProvisioningExtensions
         AzureProvisioningSeams.UseTemplateProvisioner(
             builder.Services,
             serviceProvider => new PulumiTemplateProvisioner(options, serviceProvider));
+
+        // aspire destroy: pulumi destroy runs first (while the resources still exist), then the native
+        // destroy-azure-* step deletes the resource group itself.
+        builder.Pipeline.AddStep(PulumiStackDestroyStep.CreateStep(options));
+        builder.Pipeline.AddPipelineConfiguration(PulumiStackDestroyStep.ConfigurePipelineAsync);
 
         return builder;
     }
