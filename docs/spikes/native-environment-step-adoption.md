@@ -1,9 +1,8 @@
 # 🔍 Spike: Native Aspire Environment Step Adoption
 
-**Status:** ✅ Go (all four environments)
-**Scope note (current):** The production integration ships only the Azure selectors (`AzureContainerApps`, `AzureAppService`); the Kubernetes and Docker Compose adoption frontends validated below are deferred — the current focus is the Azure Native providers. The K8s/Compose findings are retained here as the historical spike record.
+**Status:** ⚠️ Superseded — the adopt-and-traverse architecture this spike validated has been replaced by [internal-seam reuse](internal-seam-reuse.md), and the suppression/adoption code (including the spike test project) has been removed. Retained as the historical record of the step-graph findings.
 **Aspire version:** 13.4.6 (`Aspire.Hosting.Kubernetes` 13.4.6-preview.1.26319.6)
-**Spike code:** `tests/EmmittJ.Aspire.Hosting.Pulumi.NativeAdoptionSpike.Tests` (the suppression mechanism has since been promoted to production as `NativePipelineStepAdoption` + `PulumiStepSuppressionSelector`; the test project remains as the pinned step catalogue and end-to-end adoption proof)
+**Spike code:** removed (`tests/EmmittJ.Aspire.Hosting.Pulumi.NativeAdoptionSpike.Tests`, deleted along with the suppression architecture)
 
 ## 🎯 Question
 

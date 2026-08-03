@@ -4,7 +4,7 @@
 **Aspire version:** 13.4.6 (Azure.Provisioning 1.5.0, Pulumi SDK 3.107.2, Pulumi.AzureNative 3.19.0)
 **Spike code:** validated via scratch harness against `AddAzureContainerAppEnvironment` and
 `AddAzureAppServiceEnvironment`; the faithfulness check has been promoted into the pinned fixture tests in
-`tests/EmmittJ.Aspire.Hosting.Pulumi.NativeAdoptionSpike.Tests`
+`tests/EmmittJ.Aspire.Hosting.Pulumi.Tests`
 
 ## 🎯 Question
 

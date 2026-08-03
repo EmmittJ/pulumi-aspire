@@ -21,7 +21,7 @@ flowchart LR
 
 - **AddViteApp**: Vite-based frontend application
 - **AddYarp**: Reverse proxy with dual-mode routing
-- **PublishAsPulumi**: Azure Container Apps environment deployed via Pulumi
+- **UsePulumiProvisioning**: Azure Container Apps environment deployed via Pulumi
 - **PublishWithStaticFiles**: Automatic static file serving in production
 
 ## Prerequisites
@@ -46,9 +46,8 @@ aspire deploy
 | Command | Description |
 |---------|-------------|
 | `aspire run` | Run locally with Vite HMR |
-| `aspire publish` | Write a reviewable `pulumi preview` artifact |
-| `aspire deploy` | Deploy to Azure via Pulumi Automation API |
-| `aspire destroy` | Tear down resources |
+| `aspire deploy` | The normal Aspire deploy flow, executed by Pulumi |
+| `pulumi preview` / `pulumi destroy` | Work directly against the deployed stack |
 
 ## Key Aspire Patterns
 
@@ -65,11 +64,11 @@ builder.AddYarp("app")
     .PublishWithStaticFiles(frontend); // Publish: serve static files
 ```
 
-**Pulumi-Managed Azure Container Apps Environment** - Aspire models the environment, Pulumi deploys it —
-one line; the suppression selector, translation program, and registry-first phase are inferred:
+**Pulumi-Managed Azure Container Apps Environment** - a completely standard Aspire environment, deployed
+by Pulumi instead of ARM — one line; `aspire deploy` keeps its normal flow (prompts included):
 ```csharp
-builder.AddAzureContainerAppEnvironment("vite-yarp-static")
-    .PublishAsPulumi(new AzureAdoptionOptions { Location = "eastus" });
+builder.AddAzureContainerAppEnvironment("vite-yarp-static");
+builder.UsePulumiProvisioning();
 ```
 
 ## Sample Outputs

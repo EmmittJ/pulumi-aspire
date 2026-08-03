@@ -1,8 +1,8 @@
 # 🔍 Spike: Internal-Seam Reuse of the Default Azure Environments
 
-**Status:** ✅ Go (with production caveats — see Recommendation)
+**Status:** 🚀 Promoted to production — this is the shipped architecture (`EmmittJ.Aspire.Hosting.Pulumi.Azure.Seams` + `UsePulumiProvisioning`); the caveats below were accepted deliberately. See [ARCHITECTURE.md](../ARCHITECTURE.md).
 **Aspire version:** 13.4.6
-**Spike code:** `tests/EmmittJ.Aspire.Hosting.Pulumi.InternalSeamSpike.Tests`
+**Spike code:** `tests/EmmittJ.Aspire.Hosting.Pulumi.InternalSeamSpike.Tests` (retained as the pinned end-to-end proof)
 
 ## 🎯 Question
 
@@ -114,13 +114,13 @@ With the six seams swapped and nothing suppressed, the offline pipeline run:
 
 ## 💡 Recommendation
 
-The seam approach is dramatically smaller than the shipped adopt-and-traverse architecture: it would
-replace step suppression (`NativePipelineStepAdoption` + `PulumiStepSuppressionSelector`), the spliced
-deploy step, and `PulumiValueResolver` with ~6 `Replace` calls and one `IBicepProvisioner`
-implementation that feeds each template to the existing Bicep→azure-native translation core inside a
-Pulumi stack.
+**This recommendation has been carried out**: the seam approach replaced the adopt-and-traverse
+architecture — step suppression (`NativePipelineStepAdoption` + `PulumiStepSuppressionSelector`), the
+spliced deploy step, and `PulumiValueResolver` were deleted in favour of the `…Azure.Seams` shim
+(`AzureProvisioningSeams` + `IAzureTemplateProvisioner`) and the Pulumi-backed `PulumiTemplateProvisioner`
+behind `UsePulumiProvisioning`.
 
-Production caveats to weigh before promoting it:
+Production caveats that were weighed and accepted:
 
 - ⚠️ **Identity hack**: shipping a NuGet package whose assembly is named `Aspire.Hosting.Azure.Tests`
   and public-signed with Aspire's key is test-grade, not product-grade. Two assemblies with that identity
