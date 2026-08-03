@@ -5,10 +5,10 @@
   <Folder Name="/src/">
     <Project Path="src/EmmittJ.Aspire.Hosting.Pulumi/EmmittJ.Aspire.Hosting.Pulumi.csproj" />
     <Project Path="src/EmmittJ.Aspire.Hosting.Pulumi.Azure/EmmittJ.Aspire.Hosting.Pulumi.Azure.csproj" />
+    <Project Path="src/EmmittJ.Aspire.Hosting.Pulumi.Azure.Seams/EmmittJ.Aspire.Hosting.Pulumi.Azure.Seams.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/EmmittJ.Aspire.Hosting.Pulumi.Tests/EmmittJ.Aspire.Hosting.Pulumi.Tests.csproj" />
-    <Project Path="tests/EmmittJ.Aspire.Hosting.Pulumi.NativeAdoptionSpike.Tests/EmmittJ.Aspire.Hosting.Pulumi.NativeAdoptionSpike.Tests.csproj" />
     <Project Path="tests/EmmittJ.Aspire.Hosting.Pulumi.InternalSeamSpike.Tests/EmmittJ.Aspire.Hosting.Pulumi.InternalSeamSpike.Tests.csproj" />
   </Folder>
   <Folder Name="/samples/">

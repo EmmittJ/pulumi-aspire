@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <PackageId>EmmittJ.Aspire.Hosting.Pulumi</PackageId>
-    <Description>Core Pulumi integration for Aspire - adopts native Aspire compute environments and deploys their provisioning model with the Pulumi Automation API.</Description>
+    <Description>Core Pulumi integration for Aspire - the Pulumi Automation API runner shared by the provider-specific frontends.</Description>
     <PackageTags>aspire;pulumi;iac;infrastructure;cloud;deployment</PackageTags>
     <IsPackable>true</IsPackable>
     <!-- These Aspire pipeline/compute/registry APIs are still marked [Experimental]; the integration depends on them by design. -->

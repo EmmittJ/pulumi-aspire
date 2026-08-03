@@ -2,10 +2,12 @@
 
 using System.Collections.Immutable;
 using System.Reflection;
+using System.Text.Json.Nodes;
 using Aspire.Hosting.Azure;
 using Azure.Provisioning;
 using Azure.Provisioning.Expressions;
 using Azure.Provisioning.Primitives;
+using EmmittJ.Aspire.Hosting.Pulumi.Azure.Seams;
 using Microsoft.Extensions.Logging;
 using Pulumi;
 
@@ -16,9 +18,10 @@ namespace EmmittJ.Aspire.Hosting.Pulumi.Azure;
 /// materializes — into Pulumi azure-native resources inside the current Pulumi program:
 /// <list type="number">
 /// <item>captures the built construct graph (<see cref="AzureProvisioningGraphCapture"/>),</item>
-/// <item>resolves every template parameter asynchronously (known parameters from ambient client config,
-/// <see cref="BicepOutputReference"/>s wired in-memory from previously translated templates, everything
-/// else through <see cref="PulumiValueResolver"/>),</item>
+/// <item>resolves every template parameter (<see cref="BicepOutputReference"/>s to templates translated
+/// in the same program run wire in-memory as live outputs; everything else comes from the
+/// Aspire-resolved parameter values the deployment carries, with the provisioning-context values as the
+/// fallback for declared-but-unvalued known parameters),</item>
 /// <item>translates each declared resource in dependency order onto an untyped
 /// <see cref="AzureNativeResource"/> (or a <c>get*</c> invoke for <c>existing</c> declarations), grouped
 /// under one component resource per template so previews read per-Aspire-resource,</item>
@@ -32,29 +35,36 @@ internal sealed class AzureProvisioningTemplateTranslator
 {
     private readonly AzureTranslationContext _context;
     private readonly string _templateName;
+    private readonly AzureTemplateDeployment _deployment;
     private readonly AzureBicepResource _bicepResource;
+    private readonly Output<string> _resourceGroupName;
     private readonly Dictionary<string, BicepSymbol> _symbols = [];
 
-    private AzureProvisioningTemplateTranslator(AzureTranslationContext context, string templateName, AzureBicepResource bicepResource)
+    private AzureProvisioningTemplateTranslator(AzureTranslationContext context, AzureTemplateDeployment deployment)
     {
         _context = context;
-        _templateName = templateName;
-        _bicepResource = bicepResource;
+        _deployment = deployment;
+        _templateName = deployment.Resource.Name;
+        _bicepResource = deployment.Resource;
+        // Scope overrides (resources targeting an existing resource group) win over the provisioning
+        // context's resource group, exactly as they do in the native deploy.
+        _resourceGroupName = Output.Create(deployment.ResourceGroupName);
     }
 
     /// <summary>
-    /// Translates the given Aspire Azure resource's template into Pulumi resources and registers the result
+    /// Translates the given deployment's template into Pulumi resources and registers the result
     /// on the translation context.
     /// </summary>
     /// <param name="context">The shared translation context.</param>
-    /// <param name="resource">The Aspire resource carrying the template (environment or deployment target).</param>
-    public static async Task<TranslatedAzureTemplate> TranslateAsync(
+    /// <param name="deployment">The resolved deployment (environment or deployment target) to translate.</param>
+    public static Task<TranslatedAzureTemplate> TranslateAsync(
         AzureTranslationContext context,
-        AzureBicepResource resource)
+        AzureTemplateDeployment deployment)
     {
         ArgumentNullException.ThrowIfNull(context);
-        ArgumentNullException.ThrowIfNull(resource);
+        ArgumentNullException.ThrowIfNull(deployment);
 
+        var resource = deployment.Resource;
         if (resource is not AzureProvisioningResource provisioning)
         {
             throw new AzureProvisioningTranslationException(
@@ -63,22 +73,21 @@ internal sealed class AzureProvisioningTemplateTranslator
                 "Wrap it in an AzureProvisioningResource, or provision it out-of-band.");
         }
 
-        var translator = new AzureProvisioningTemplateTranslator(context, resource.Name, resource);
-        var translated = await translator.TranslateCoreAsync(provisioning).ConfigureAwait(false);
+        var translator = new AzureProvisioningTemplateTranslator(context, deployment);
+        var translated = translator.TranslateCore(provisioning);
         context.RegisterTemplate(resource, translated);
-        return translated;
+        return Task.FromResult(translated);
     }
 
-    private async Task<TranslatedAzureTemplate> TranslateCoreAsync(AzureProvisioningResource provisioning)
+    private TranslatedAzureTemplate TranslateCore(AzureProvisioningResource provisioning)
     {
         var infrastructure = AzureProvisioningGraphCapture.Capture(provisioning);
         var constructs = infrastructure.GetProvisionableResources().ToList();
-        var expressionTranslator = new BicepExpressionTranslator(_context, _templateName, _symbols);
+        var expressionTranslator = new BicepExpressionTranslator(_context, _templateName, _resourceGroupName, _symbols);
 
-        // Parameters resolve asynchronously first; resources then translate synchronously inside the program.
         foreach (var parameter in constructs.OfType<ProvisioningParameter>())
         {
-            var value = await ResolveParameterAsync(parameter, expressionTranslator).ConfigureAwait(false);
+            var value = ResolveParameter(parameter, expressionTranslator);
             _symbols[parameter.BicepIdentifier] = new ParameterSymbol(parameter.BicepIdentifier, value);
         }
 
@@ -114,30 +123,26 @@ internal sealed class AzureProvisioningTemplateTranslator
             var value = expressionTranslator.AsStringOutput(
                 expressionTranslator.Translate(output.Value.Compile(), name, "<output>"));
 
-            if (!_context.UseDeterministicPlaceholders)
+            // Back-propagate deployed values into Aspire's output dictionary so BicepOutputReference
+            // resolution works exactly as after a native ARM deployment. The applies run because the
+            // caller registers every template output as a stack output. Once the last output lands, the
+            // provisioning gate is released: BicepOutputReference.GetValueAsync awaits
+            // ProvisioningTaskCompletionSource before reading Outputs.
+            value = value.Apply(v =>
             {
-                // Back-propagate deployed values into Aspire's output dictionary so BicepOutputReference
-                // resolution works without a provisioning context. The applies run because the caller
-                // registers every template output as a stack output. Once the last output lands, the
-                // provisioning gate is released: BicepOutputReference.GetValueAsync awaits
-                // ProvisioningTaskCompletionSource before reading Outputs, and the native provision step
-                // that would normally complete it was suppressed in favour of this translation.
-                value = value.Apply(v =>
+                _bicepResource.Outputs[name] = v;
+                if (Interlocked.Decrement(ref pendingBackPropagations) == 0)
                 {
-                    _bicepResource.Outputs[name] = v;
-                    if (Interlocked.Decrement(ref pendingBackPropagations) == 0)
-                    {
-                        _bicepResource.ProvisioningTaskCompletionSource?.TrySetResult();
-                    }
+                    _bicepResource.ProvisioningTaskCompletionSource?.TrySetResult();
+                }
 
-                    return v;
-                });
-            }
+                return v;
+            });
 
             outputs[name] = value;
         }
 
-        if (!_context.UseDeterministicPlaceholders && provisioningOutputs.Count == 0)
+        if (provisioningOutputs.Count == 0)
         {
             // No outputs to back-propagate: release the provisioning gate as soon as the template's
             // resources are declared so BicepOutputReference-free consumers never dangle.
@@ -147,41 +152,34 @@ internal sealed class AzureProvisioningTemplateTranslator
         return new TranslatedAzureTemplate(_templateName, component, resources, outputs);
     }
 
-    private async Task<object?> ResolveParameterAsync(ProvisioningParameter parameter, BicepExpressionTranslator translator)
+    private object? ResolveParameter(ProvisioningParameter parameter, BicepExpressionTranslator translator)
     {
         var name = parameter.BicepIdentifier;
-        if (_bicepResource.Parameters.TryGetValue(name, out var value))
+        if (_bicepResource.Parameters.TryGetValue(name, out var value)
+            && value is BicepOutputReference outputReference
+            && _context.Templates.TryGetValue(outputReference.Resource, out var translated)
+            && translated.Outputs.TryGetValue(outputReference.Name, out var inMemory))
         {
-            if (value is null)
+            // Environment output feeding a deployment-target parameter, with the environment translated
+            // in this same program run: wire the live output through in-memory instead of the string
+            // round-trip Aspire already resolved into the deployment parameters.
+            return parameter.IsSecure ? Output.CreateSecret(inMemory) : inMemory;
+        }
+
+        if (_deployment.Parameters.TryGetPropertyValue(name, out var armParameter))
+        {
+            // Aspire already resolved the value (ReferenceExpressions, ParameterResources, connection
+            // strings, outputs of previously provisioned templates) into the ARM parameter format.
+            var resolved = armParameter?["value"];
+            if (resolved is not null)
             {
-                return ResolveKnownParameter(name);
+                var converted = ConvertJsonValue(resolved);
+                return parameter.IsSecure && converted is string secret
+                    ? Output.CreateSecret(secret)
+                    : converted;
             }
 
-            if (value is BicepOutputReference outputReference
-                && _context.Templates.TryGetValue(outputReference.Resource, out var translated)
-                && translated.Outputs.TryGetValue(outputReference.Name, out var inMemory))
-            {
-                // Environment output feeding a deployment-target parameter: wire the live output through
-                // in-memory instead of a string round-trip via Outputs.
-                return inMemory;
-            }
-
-            try
-            {
-                var resolved = await _context.ValueResolver.ResolveAsync(value).ConfigureAwait(false);
-                return parameter.IsSecure && !resolved.IsSecret
-                    ? Output.CreateSecret(resolved.Value)
-                    : resolved.Value;
-            }
-            catch (Exception ex) when (_context.UseDeterministicPlaceholders && ex is not OperationCanceledException)
-            {
-                // Publish previews run before images are pushed and without deployed outputs; keep the
-                // preview alive with a placeholder instead of failing the artifact.
-                _context.Logger.LogWarning(
-                    "Parameter '{Parameter}' of template '{Template}' could not be resolved for the preview: {Message}",
-                    name, _templateName, ex.Message);
-                return Output.Create($"<preview:{name}>");
-            }
+            return ResolveKnownParameter(name);
         }
 
         var compiled = ((IBicepValue)parameter.Value).Compile();
@@ -193,8 +191,6 @@ internal sealed class AzureProvisioningTemplateTranslator
 
         if (name == AzureBicepResource.KnownParameters.Location)
         {
-            // Native deploys inject the location from the deployment context (it is deliberately excluded
-            // from the Parameters back-fill); the translation supplies the target resource group's location.
             return _context.Location;
         }
 
@@ -203,9 +199,23 @@ internal sealed class AzureProvisioningTemplateTranslator
             "the template declares this parameter but the Aspire resource provides no value for it");
     }
 
+    private static object? ConvertJsonValue(JsonNode node) => node switch
+    {
+        JsonValue value when value.TryGetValue<bool>(out var b) => b,
+        JsonValue value when value.TryGetValue<int>(out var i) => i,
+        JsonValue value when value.TryGetValue<long>(out var l) => l,
+        JsonValue value when value.TryGetValue<double>(out var d) => d,
+        JsonValue value when value.TryGetValue<string>(out var s) => s,
+        JsonArray array => array.Select(static e => e is null ? null : ConvertJsonValue(e)).ToList(),
+        JsonObject obj => obj.ToDictionary(static p => p.Key, static p => p.Value is null ? null : ConvertJsonValue(p.Value)),
+        _ => throw new AzureProvisioningTranslationException(
+            $"A resolved parameter value of JSON kind '{node.GetValueKind()}' is not supported."),
+    };
+
     private object ResolveKnownParameter(string name) => name switch
     {
         "principalId" or "userPrincipalId" => _context.PrincipalId,
+        "principalName" => _context.PrincipalName,
         "principalType" => Output.Create("User"),
         "location" => _context.Location,
         _ => throw AzureProvisioningTranslationException.ForConstruct(
@@ -263,7 +273,6 @@ internal sealed class AzureProvisioningTemplateTranslator
         var mapping = AzureNativeTypeCatalog.Map(armType, apiVersion, nameLiteral);
         var symbol = new ResourceSymbol(identifier, armType, apiVersion, mapping, construct.IsExistingResource)
         {
-            Context = _context,
             TemplateName = _templateName,
             Name = translator.AsStringOutput(translator.Translate(nameExpression, identifier, "name")),
             InvokeArgs = [],
@@ -287,7 +296,7 @@ internal sealed class AzureProvisioningTemplateTranslator
 
         if (mapping.RequiresResourceGroupName)
         {
-            symbol.InvokeArgs["resourceGroupName"] = _context.ResourceGroupName;
+            symbol.InvokeArgs["resourceGroupName"] = _resourceGroupName;
         }
 
         if (construct.IsExistingResource)

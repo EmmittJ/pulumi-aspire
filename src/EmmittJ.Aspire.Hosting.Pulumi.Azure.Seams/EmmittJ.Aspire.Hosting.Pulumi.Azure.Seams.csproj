@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <PackageId>EmmittJ.Aspire.Hosting.Pulumi.Azure.Seams</PackageId>
+    <Description>Internal-seam boundary for the Pulumi-Aspire Azure integration - swaps Aspire's internal Azure provisioning execution seam (IBicepProvisioner) for a pluggable template provisioner, exposing only public contracts.</Description>
+    <PackageTags>aspire;pulumi;azure;iac;infrastructure;cloud</PackageTags>
+    <IsPackable>true</IsPackable>
+    <!--
+      🔑 The internal-seam access mechanism (see docs/spikes/internal-seam-reuse.md).
+
+      Aspire.Hosting.Azure grants InternalsVisibleTo("Aspire.Hosting.Azure.Tests, PublicKey=...aspire OSS
+      key...") and CoreCLR does not validate strong-name signatures — so an assembly that (a) is named
+      Aspire.Hosting.Azure.Tests and (b) is public-signed with just the public half of Aspire's OSS key
+      (aspire-public.snk, the exact key blob from the IVT attribute) gets full compile-time access to the
+      Aspire.Hosting.Azure internals. No reflection, no IL emit, no upstream changes.
+
+      ⚠️ Known caveats (accepted deliberately — this is the entire integration surface):
+      - This assembly cannot be loaded alongside Aspire's real Aspire.Hosting.Azure.Tests assembly.
+      - The trick breaks (at compile time, loudly) if Aspire drops or renames the IVT grant.
+      - Internals carry no compatibility promise; every Aspire version bump can break compilation.
+
+      Everything that touches Aspire internals is confined to this one small assembly; the public surface it
+      exposes (IAzureTemplateProvisioner and friends) uses only public Aspire types, so the rest of the
+      integration - and its consumers - keep normal assembly identities.
+    -->
+    <AssemblyName>Aspire.Hosting.Azure.Tests</AssemblyName>
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>aspire-public.snk</AssemblyOriginatorKeyFile>
+    <!-- These Aspire pipeline/compute APIs are still marked [Experimental]; the integration depends on them by design. -->
+    <NoWarn>$(NoWarn);ASPIREPIPELINES001;ASPIREPIPELINES003;ASPIREPIPELINES004;ASPIRECOMPUTE001;ASPIRECOMPUTE002;ASPIRECOMPUTE003;ASPIREAZURE001</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.Azure" />
+  </ItemGroup>
+
+</Project>

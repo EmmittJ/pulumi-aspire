@@ -20,6 +20,7 @@ namespace EmmittJ.Aspire.Hosting.Pulumi.Azure;
 internal sealed partial class BicepExpressionTranslator(
     AzureTranslationContext context,
     string templateName,
+    Output<string> resourceGroupName,
     IReadOnlyDictionary<string, BicepSymbol> symbols)
 {
     [GeneratedRegex(@"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")]
@@ -168,8 +169,8 @@ internal sealed partial class BicepExpressionTranslator(
                 return member switch
                 {
                     "location" => context.Location,
-                    "name" => context.ResourceGroupName,
-                    "id" => context.ResourceGroupId,
+                    "name" => resourceGroupName,
+                    "id" => Output.Format($"/subscriptions/{context.SubscriptionId}/resourceGroups/{resourceGroupName}"),
                     _ => throw Fail($"resourceGroup().{member} is not supported"),
                 };
             case Dictionary<string, object?> dictionary:
@@ -346,7 +347,6 @@ internal sealed class ResourceSymbol(
     /// <summary>The invoke arguments (name, parent, resource group) used for state reads.</summary>
     public required Dictionary<string, object?> InvokeArgs { get; set; }
 
-    public AzureTranslationContext Context { get; set; } = null!;
     public string TemplateName { get; set; } = string.Empty;
 
     /// <summary>The ARM resource id: the created resource's id, or a state read for existing resources.</summary>
@@ -356,11 +356,6 @@ internal sealed class ResourceSymbol(
 
     public Output<string> ReadState(IReadOnlyList<string> path, string propertyPath)
     {
-        if (Context.UseDeterministicPlaceholders)
-        {
-            return Output.Create($"<preview:{Identifier}.{string.Join('.', path)}>");
-        }
-
         // azure-native flattens the ARM 'properties' envelope into the invoke result's top level.
         var effective = path.Count > 0 && path[0] == "properties" ? path.Skip(1).ToArray() : [.. path];
         return GetState().Apply(state => WalkState(state, effective, propertyPath));
@@ -368,11 +363,6 @@ internal sealed class ResourceSymbol(
 
     public Output<string> ReadKeys(IReadOnlyList<string> path, string propertyPath)
     {
-        if (Context.UseDeterministicPlaceholders)
-        {
-            return Output.Create($"<preview:{Identifier}.listKeys().{string.Join('.', path)}>");
-        }
-
         var token = AzureNativeTypeCatalog.GetListKeysInvokeToken(ArmType)
             ?? throw AzureProvisioningTranslationException.ForConstruct(
                 TemplateName, Identifier, propertyPath, $"no listKeys invoke is mapped for ARM type '{ArmType}'");

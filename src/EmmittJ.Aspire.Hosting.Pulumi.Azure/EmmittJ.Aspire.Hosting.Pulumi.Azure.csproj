@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <PackageId>EmmittJ.Aspire.Hosting.Pulumi.Azure</PackageId>
-    <Description>Azure frontend for the Pulumi-Aspire integration - adopts native Azure compute environments and translates their provisioning model to Pulumi azure-native resources.</Description>
+    <Description>Azure frontend for the Pulumi-Aspire integration - swaps the execution engine of Aspire's native Azure provisioning pipeline for Pulumi by translating each provisioning template to azure-native resources deployed with pulumi up.</Description>
     <PackageTags>aspire;pulumi;azure;iac;infrastructure;cloud</PackageTags>
     <IsPackable>true</IsPackable>
     <!-- These Aspire pipeline/compute/registry APIs are still marked [Experimental]; the integration depends on them by design. -->
@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\EmmittJ.Aspire.Hosting.Pulumi\EmmittJ.Aspire.Hosting.Pulumi.csproj" />
+    <ProjectReference Include="..\EmmittJ.Aspire.Hosting.Pulumi.Azure.Seams\EmmittJ.Aspire.Hosting.Pulumi.Azure.Seams.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -20,7 +21,6 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="EmmittJ.Aspire.Hosting.Pulumi.Tests" />
-    <InternalsVisibleTo Include="EmmittJ.Aspire.Hosting.Pulumi.NativeAdoptionSpike.Tests" />
   </ItemGroup>
 
 </Project>
