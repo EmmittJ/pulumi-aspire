@@ -47,6 +47,7 @@ aspire deploy
 |---------|-------------|
 | `aspire run` | Run locally with Vite HMR |
 | `aspire deploy` | The normal Aspire deploy flow, executed by Pulumi |
+| `aspire destroy` | `pulumi destroy` tears down the stack, then the resource group is deleted |
 | `pulumi preview` / `pulumi destroy` | Work directly against the deployed stack |
 
 ## Key Aspire Patterns

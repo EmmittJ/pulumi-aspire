@@ -29,7 +29,6 @@ The adapter (`SeamBicepProvisioner`) mirrors the native provisioner's pre-deploy
 
 - **Assembly-identity hack**: the Seams assembly impersonates Aspire's own test assembly. Aspire internals can change in any release; the compile breaks loudly on upgrade (which is the desired failure mode), and the mock-engine fixture tests pin the observable behavior.
 - **One per process**: two assemblies named `Aspire.Hosting.Azure.Tests` cannot be loaded together, so test projects consuming the shim must not carry that identity themselves.
-- **Native destroy vs. Pulumi state**: `aspire deploy`'s destroy path deletes the resource group directly via ARM, leaving the Pulumi stack's state stale. Prefer `pulumi destroy` + `pulumi stack rm` out-of-band, or refresh the stack afterwards.
 
 ## The Pulumi execution engine
 
@@ -38,6 +37,10 @@ The adapter (`SeamBicepProvisioner`) mirrors the native provisioner's pre-deploy
 `PulumiTemplateProvisioner` maintains a **cumulative single-stack model**: every template handed to `ProvisionAsync` (environment resources first, then each compute resource's deployment target — ordering guaranteed by the native pipeline's step graph) is appended, and one `pulumi up` runs against a single stack whose inline program translates the whole model so far. Pulumi's diffing makes each successive up incremental — already-deployed resources no-op — so the stack always reflects the full application and remains independently usable (`pulumi preview`, `pulumi destroy`, drift detection). Concurrent provision steps serialize on a gate, since ups against one stack cannot overlap.
 
 The inline program (`BuildProgramAsync`) creates one `AzureTranslationContext` from the provisioning-context values, translates each deployment in order, and exports every template output as a `{template}_{output}` stack output. Exporting is load-bearing: it roots the applies that back-propagate deployed values into `AzureBicepResource.Outputs` and complete the provisioning gate — which is exactly what downstream *native* steps consume (the real `login-to-acr-*` step reads the back-propagated registry endpoint, and later templates' `BicepOutputReference` parameters resolve through Aspire's own `BicepUtilities`).
+
+### The destroy path
+
+`UsePulumiProvisioning` also splices a `destroy-pulumi-stack` step into the standard destroy slots (`destroy-prereq` → `destroy`) and, via a pipeline-configuration callback, orders every native `destroy-azure-*` step after it. On `aspire destroy`, Pulumi therefore tears down each stack resource first — through `pulumi destroy`, while the resources still exist, leaving the stack's state empty instead of stale — and the native step then deletes the resource group itself via ARM (the resource group is created by the native `create-provisioning-context` step and deliberately not Pulumi-managed). The step targets exactly the project/stack the deploy path resolves (`PulumiStackNameResolver`), skips cleanly when the stack doesn't exist or is already empty, and mirrors the native destroy step's confirmation contract: it prompts through `IInteractionService`, honors `--yes` (`PipelineOptions.SkipConfirmation`), and refuses to destroy without a confirmation channel.
 
 ### Stack naming
 

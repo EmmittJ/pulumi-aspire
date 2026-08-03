@@ -94,10 +94,12 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the implementation details 
 |---------|-------------|
 | `aspire run` | Run locally; completely untouched |
 | `aspire deploy` | The normal Aspire deploy flow, with every Azure template deployed via `pulumi up` |
+| `aspire destroy` | Runs `pulumi destroy` against the stack (each resource torn down through Pulumi), then the native resource-group deletion |
 | `pulumi preview` / `pulumi destroy` | Work directly against the deployed stack, out-of-band |
 
-> ⚠️ `aspire destroy`'s native path deletes the resource group directly via ARM, which leaves the Pulumi
-> stack's state stale. Prefer `pulumi destroy` followed by `pulumi stack rm`, or refresh the stack afterwards.
+> ℹ️ `aspire destroy` prompts twice unless `--yes` is passed: once for the Pulumi stack's resources and
+> once for the native resource-group deletion. Running `pulumi destroy` first keeps the stack's state
+> consistent — it ends up empty instead of stale.
 
 ## ⚙️ Configuration
 
