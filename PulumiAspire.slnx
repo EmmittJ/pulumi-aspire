@@ -9,6 +9,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/EmmittJ.Aspire.Hosting.Pulumi.Tests/EmmittJ.Aspire.Hosting.Pulumi.Tests.csproj" />
     <Project Path="tests/EmmittJ.Aspire.Hosting.Pulumi.NativeAdoptionSpike.Tests/EmmittJ.Aspire.Hosting.Pulumi.NativeAdoptionSpike.Tests.csproj" />
+    <Project Path="tests/EmmittJ.Aspire.Hosting.Pulumi.InternalSeamSpike.Tests/EmmittJ.Aspire.Hosting.Pulumi.InternalSeamSpike.Tests.csproj" />
   </Folder>
   <Folder Name="/samples/">
   </Folder>
