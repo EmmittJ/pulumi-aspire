@@ -4,18 +4,18 @@
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <!-- The integration consumes Aspire APIs still marked [Experimental]. -->
-    <NoWarn>$(NoWarn);ASPIREPIPELINES001;ASPIREPIPELINES003;ASPIREPIPELINES004;ASPIRECOMPUTE001;ASPIRECOMPUTE002;ASPIRECOMPUTE003</NoWarn>
+    <NoWarn>$(NoWarn);ASPIREPIPELINES001;ASPIREPIPELINES002;ASPIREPIPELINES003;ASPIREPIPELINES004;ASPIRECOMPUTE001;ASPIRECOMPUTE002;ASPIRECOMPUTE003;ASPIREAZURE001;ASPIREPUBLISHERS001</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\EmmittJ.Aspire.Hosting.Pulumi\EmmittJ.Aspire.Hosting.Pulumi.csproj" />
     <ProjectReference Include="..\..\src\EmmittJ.Aspire.Hosting.Pulumi.Azure\EmmittJ.Aspire.Hosting.Pulumi.Azure.csproj" />
-    <ProjectReference Include="..\..\src\EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers\EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers.csproj" />
-    <ProjectReference Include="..\..\src\EmmittJ.Aspire.Hosting.Pulumi.Azure.AppService\EmmittJ.Aspire.Hosting.Pulumi.Azure.AppService.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Aspire.Hosting.Azure.AppContainers" />
+    <PackageReference Include="Aspire.Hosting.Azure.AppService" />
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="xunit.runner.visualstudio">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

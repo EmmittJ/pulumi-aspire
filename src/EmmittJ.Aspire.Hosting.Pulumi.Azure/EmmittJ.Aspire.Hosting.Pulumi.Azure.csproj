@@ -2,25 +2,24 @@
 
   <PropertyGroup>
     <PackageId>EmmittJ.Aspire.Hosting.Pulumi.Azure</PackageId>
-    <Description>Shared Azure infrastructure primitives for the Pulumi-Aspire integration - container registry and common Azure resources used by the Azure compute providers.</Description>
+    <Description>Azure frontend for the Pulumi-Aspire integration - swaps the execution engine of Aspire's native Azure provisioning pipeline for Pulumi by translating each provisioning template to azure-native resources deployed with pulumi up.</Description>
     <PackageTags>aspire;pulumi;azure;iac;infrastructure;cloud</PackageTags>
     <IsPackable>true</IsPackable>
     <!-- These Aspire pipeline/compute/registry APIs are still marked [Experimental]; the integration depends on them by design. -->
-    <NoWarn>$(NoWarn);ASPIREPIPELINES001;ASPIREPIPELINES003;ASPIREPIPELINES004;ASPIRECOMPUTE001;ASPIRECOMPUTE002;ASPIRECOMPUTE003</NoWarn>
+    <NoWarn>$(NoWarn);ASPIREPIPELINES001;ASPIREPIPELINES003;ASPIREPIPELINES004;ASPIRECOMPUTE001;ASPIRECOMPUTE002;ASPIRECOMPUTE003;ASPIREINTERACTION001</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\EmmittJ.Aspire.Hosting.Pulumi\EmmittJ.Aspire.Hosting.Pulumi.csproj" />
+    <ProjectReference Include="..\EmmittJ.Aspire.Hosting.Pulumi.Azure.Seams\EmmittJ.Aspire.Hosting.Pulumi.Azure.Seams.csproj" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.Azure" />
     <PackageReference Include="Pulumi.AzureNative" />
-    <PackageReference Include="Pulumi.Random" />
   </ItemGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="EmmittJ.Aspire.Hosting.Pulumi.Azure.AppContainers" />
-    <InternalsVisibleTo Include="EmmittJ.Aspire.Hosting.Pulumi.Azure.AppService" />
     <InternalsVisibleTo Include="EmmittJ.Aspire.Hosting.Pulumi.Tests" />
   </ItemGroup>
 

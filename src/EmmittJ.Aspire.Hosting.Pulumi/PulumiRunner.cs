@@ -2,6 +2,7 @@
 
 using System.Collections.Immutable;
 using Pulumi.Automation;
+using Pulumi.Automation.Commands.Exceptions;
 
 namespace EmmittJ.Aspire.Hosting.Pulumi;
 
@@ -32,7 +33,6 @@ public sealed class PulumiStackRunner
     private readonly string _projectName;
     private readonly string _stackName;
     private string? _workDir;
-    private Func<WorkspaceStack, CancellationToken, Task>? _configure;
 
     internal PulumiStackRunner(string projectName, string stackName)
     {
@@ -50,15 +50,6 @@ public sealed class PulumiStackRunner
             _workDir = workDir;
         }
 
-        return this;
-    }
-
-    /// <summary>
-    /// Sets a callback that configures the stack (for example provider config) before the operation runs.
-    /// </summary>
-    public PulumiStackRunner WithConfiguration(Func<WorkspaceStack, CancellationToken, Task> configure)
-    {
-        _configure = configure;
         return this;
     }
 
@@ -94,33 +85,85 @@ public sealed class PulumiStackRunner
     }
 
     /// <summary>
-    /// Runs <c>pulumi destroy</c> for the inline program.
+    /// Runs <c>pulumi destroy</c> against the stack's existing state. Destroy operates on state alone, so
+    /// no program is required, and the stack is selected — never created — to avoid manufacturing state
+    /// where none exists.
     /// </summary>
-    public async Task DestroyAsync(
-        Func<Task<IDictionary<string, object?>>> program,
-        CancellationToken cancellationToken = default)
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The destroy result, or <see langword="null"/> when the stack does not exist.</returns>
+    public async Task<PulumiDestroyResult?> DestroyAsync(CancellationToken cancellationToken = default)
     {
-        var stack = await CreateStackAsync(program, cancellationToken).ConfigureAwait(false);
-        await stack.DestroyAsync(new DestroyOptions(), cancellationToken).ConfigureAwait(false);
+        var stack = await SelectStackAsync(cancellationToken).ConfigureAwait(false);
+        if (stack is null)
+        {
+            return null;
+        }
+
+        var result = await stack.DestroyAsync(new DestroyOptions(), cancellationToken).ConfigureAwait(false);
+        return new PulumiDestroyResult(result.Summary);
+    }
+
+    /// <summary>
+    /// Gets the number of resources currently tracked in the stack's state, excluding the root stack
+    /// resource and providers (matching what <c>pulumi destroy</c> reports as deletions).
+    /// </summary>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The resource count, or <see langword="null"/> when the stack does not exist.</returns>
+    public async Task<int?> GetResourceCountAsync(CancellationToken cancellationToken = default)
+    {
+        var stack = await SelectStackAsync(cancellationToken).ConfigureAwait(false);
+        if (stack is null)
+        {
+            return null;
+        }
+
+        var deployment = await stack.ExportStackAsync(cancellationToken).ConfigureAwait(false);
+        if (!deployment.Json.TryGetProperty("deployment", out var state) ||
+            !state.TryGetProperty("resources", out var resources))
+        {
+            return 0;
+        }
+
+        var count = 0;
+        foreach (var resource in resources.EnumerateArray())
+        {
+            var type = resource.TryGetProperty("type", out var typeElement) ? typeElement.GetString() : null;
+            if (type is not null && type != "pulumi:pulumi:Stack" && !type.StartsWith("pulumi:providers:", StringComparison.Ordinal))
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    private async Task<WorkspaceStack?> SelectStackAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await LocalWorkspace.SelectStackAsync(
+                new InlineProgramArgs(_projectName, _stackName, PulumiFn.Create(() => { }))
+                {
+                    WorkDir = GetWorkDir()
+                },
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (StackNotFoundException)
+        {
+            return null;
+        }
     }
 
     private async Task<WorkspaceStack> CreateStackAsync(
         Func<Task<IDictionary<string, object?>>> program,
         CancellationToken cancellationToken)
     {
-        var stack = await LocalWorkspace.CreateOrSelectStackAsync(
+        return await LocalWorkspace.CreateOrSelectStackAsync(
             new InlineProgramArgs(_projectName, _stackName, PulumiFn.Create(program))
             {
                 WorkDir = GetWorkDir()
             },
             cancellationToken).ConfigureAwait(false);
-
-        if (_configure is not null)
-        {
-            await _configure(stack, cancellationToken).ConfigureAwait(false);
-        }
-
-        return stack;
     }
 
     private string GetWorkDir()
@@ -154,3 +197,7 @@ public sealed record PulumiUpResult(
 public sealed record PulumiPreviewResult(
     IImmutableDictionary<OperationType, int> ChangeSummary,
     string StandardOutput);
+
+/// <summary>Result of a <c>pulumi destroy</c> operation.</summary>
+/// <param name="Summary">The update summary.</param>
+public sealed record PulumiDestroyResult(UpdateSummary Summary);
